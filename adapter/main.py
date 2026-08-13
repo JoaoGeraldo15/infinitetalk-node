@@ -17,6 +17,8 @@ todos os usuários. Ver INTEGRATION.md §2.
 from __future__ import annotations
 
 import logging
+import os
+import secrets
 import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -43,11 +45,13 @@ ESTADO = {"status": "provisioning"}
 # ── autenticação ──────────────────────────────────────────────────────
 
 async def autenticar(request: Request) -> None:
-    if not CONFIG.auth_token:
-        log.warning("OPEN_BUTTON_TOKEN vazio — API SEM autenticação")
-        return
+    # CONFIG.auth_token nunca é vazio: sem ADAPTER_TOKEN no template, o
+    # config.py sorteia um. Não existe modo "sem autenticação" aqui — a
+    # máquina tem IP público e é alugada de um host anônimo.
     cabecalho = request.headers.get("authorization", "")
-    if cabecalho != f"Bearer {CONFIG.auth_token}":
+    # compare_digest e não `!=`: comparação de string vaza, pelo tempo, quantos
+    # caracteres iniciais o atacante acertou.
+    if not secrets.compare_digest(cabecalho, f"Bearer {CONFIG.auth_token}"):
         raise HTTPException(status_code=401, detail="token inválido")
 
 
@@ -114,6 +118,13 @@ def _registrar_na_plataforma() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    if os.environ.get("ADAPTER_TOKEN"):
+        log.info("autenticação: ADAPTER_TOKEN do template")
+    else:
+        # Sem isto o nó ficaria inacessível: ninguém sabe o token sorteado.
+        log.warning("ADAPTER_TOKEN ausente no template — token SORTEADO para "
+                    "esta sessão:\n\n    %s\n\nDefina ADAPTER_TOKEN no template "
+                    "para não depender do log.", CONFIG.auth_token)
     threading.Thread(target=_preparar, daemon=True).start()
     yield
 

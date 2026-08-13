@@ -101,25 +101,57 @@ Criado uma vez, reusado todo sábado.
 | Disk | **200 GB** (estático, não muda depois) |
 | **Private template** | ✅ é aqui que os tokens moram |
 
-**Docker options:**
+**Environment variables** (é este campo, não o "Extra docker run args"):
+
+```
+ADAPTER_REPO       = SEU_USUARIO/SEU_REPO
+ADAPTER_REF        = main
+ADAPTER_TOKEN      = <sorteie: openssl rand -base64 32>
+PROVISIONING_SCRIPT= https://raw.githubusercontent.com/SEU_USUARIO/SEU_REPO/main/bootstrap.sh
+ENABLE_HTTPS       = true
+HF_TOKEN           = hf_...
+```
+
+**Extra docker run args** — só o que não é variável:
 
 ```
 -p 8000:8000
--e PROVISIONING_SCRIPT=https://raw.githubusercontent.com/SEU_USUARIO/SEU_REPO/main/bootstrap.sh
--e ADAPTER_REPO=SEU_USUARIO/SEU_REPO
--e ADAPTER_REF=main
--e PORTAL_CONFIG=localhost:1111:11111:/:Instance Portal|localhost:8000:18000:/:InfiniteTalk API
--e ENABLE_HTTPS=true
--e HF_TOKEN=hf_...
--e BACKEND_URL=https://sua-plataforma.com
--e BACKEND_TOKEN=...
--e HF_REVISION=<commit>
 ```
 
-⚠️ `PORTAL_CONFIG` **precisa** estar aqui, não no `bootstrap.sh`: o Caddy da
-base-image lê essa variável quando sobe, antes do script de provisionamento
-rodar. É ele quem põe TLS e autenticação na frente do adapter — sem isso, a API
-fica exposta em HTTP puro.
+### `PORTAL_CONFIG`: editar, nunca acrescentar
+
+⚠️ **O template já vem com um `PORTAL_CONFIG`**, definido pela imagem, listando
+o Wan2GP, o Jupyter, o Terminal e o Syncthing. Declarar um segundo `-e
+PORTAL_CONFIG=` **não soma — substitui**: com `-e` repetido, o último vence, e
+você perde do portal justamente as ferramentas de depuração.
+
+Edite a variável existente e acrescente **no fim**:
+
+```
+|localhost:8000:18000:/:InfiniteTalk API
+```
+
+Ela precisa vir do template e não do `bootstrap.sh`: o Caddy lê essa variável
+quando sobe, antes do provisionamento rodar. É ele quem põe TLS e autenticação
+na frente do adapter — sem isso a API fica em HTTP puro.
+
+### `ADAPTER_TOKEN`: o segredo da API
+
+⚠️ **Não é o `OPEN_BUTTON_TOKEN`.** Este README dizia que era; está errado. O
+template do Vast define `OPEN_BUTTON_TOKEN=1` — é uma **flag booleana**, não um
+segredo. Usá-la deixaria a API do nó protegida pelo token `1`, num IP público.
+
+Sem `ADAPTER_TOKEN`, o adapter sorteia um token por sessão e o imprime no log.
+Funciona, mas obriga a ler o log a cada máquina — defina no template.
+
+### Opcionais
+
+```
+BACKEND_URL   = https://sua-plataforma.com    # auto-registro (Fase 3)
+BACKEND_TOKEN = ...                           # escopo: só /gpu-nodes/register
+HF_REVISION   = <commit>                      # congela os pesos
+WAN2GP_PYTHON = /venv/main/bin/python         # só se a detecção falhar
+```
 
 ⚠️ `ADAPTER_REPO` é obrigatório; sem ele o `bootstrap.sh` aborta na primeira
 linha, de propósito, em vez de subir uma máquina inútil.

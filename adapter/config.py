@@ -26,6 +26,16 @@ def _int(nome: str, padrao: int) -> int:
         return padrao
 
 
+def _sortear_token() -> str:
+    """Token de emergência quando ADAPTER_TOKEN não foi definido no template.
+
+    Impresso no log do adapter no start — ver `main.py`. Nunca reutilizado
+    entre sessões, de propósito: um nó destruído não deixa credencial viva.
+    """
+    import secrets
+    return secrets.token_urlsafe(32)
+
+
 @dataclass(frozen=True)
 class Config:
     # ── Wan2GP ────────────────────────────────────────────────────────
@@ -75,9 +85,18 @@ class Config:
 
     # ── API ───────────────────────────────────────────────────────────
     port: int = _int("ADAPTER_PORT", 18000)
-    # A base-image do Vast gera este token no boot e o expõe no ambiente.
-    # É a credencial que a plataforma usa no header Authorization.
-    auth_token: str = _env("OPEN_BUTTON_TOKEN", "")
+
+    # Credencial que a plataforma manda no header Authorization.
+    #
+    # ⚠️ NÃO use OPEN_BUTTON_TOKEN. Eu tinha assumido que a base-image do Vast
+    # guardava um token gerado ali; o template mostra `OPEN_BUTTON_TOKEN=1` —
+    # é uma FLAG booleana, não um segredo. Usá-la deixaria a API do nó
+    # protegida pelo token "1", numa máquina com IP público.
+    #
+    # Sem ADAPTER_TOKEN no template, sorteamos um por sessão: um nó com token
+    # aleatório é inútil até você ler o log, mas um nó com token adivinhável é
+    # pior — qualquer varredura de porta entra.
+    auth_token: str = field(default_factory=lambda: _env("ADAPTER_TOKEN", "") or _sortear_token())
 
     # ── Auto-registro na plataforma ───────────────────────────────────
     # Opcional: sem BACKEND_URL o nó não se registra, e você cola o endereço
