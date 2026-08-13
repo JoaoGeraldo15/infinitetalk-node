@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+# gravado pelo bootstrap.sh na máquina, nunca versionado
+.python
+adapter.log
