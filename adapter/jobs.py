@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import queue
+import shutil
 import threading
 import time
 import uuid
@@ -216,11 +217,34 @@ class Fila:
 
     @staticmethod
     def _baixar(url: str, destino: Path) -> Path:
-        with httpx.stream("GET", url, timeout=300, follow_redirects=True) as r:
-            r.raise_for_status()
-            with destino.open("wb") as f:
-                for bloco in r.iter_bytes():
-                    f.write(bloco)
+        """Traz uma entrada para o diretório do job.
+
+        Em produção a plataforma manda URL https. Mas na primeira sessão de
+        validação ela ainda não está no ar, e é preciso poder testar com um
+        arquivo enviado pelo Jupyter — daí o caminho local também ser aceito.
+        """
+        if url.startswith(("http://", "https://")):
+            with httpx.stream("GET", url, timeout=300, follow_redirects=True) as r:
+                r.raise_for_status()
+                with destino.open("wb") as f:
+                    for bloco in r.iter_bytes():
+                        f.write(bloco)
+            return destino
+
+        # Caminho local: restrito a LOCAL_INPUT_DIR (/workspace por padrão).
+        # Sem essa cerca, quem tivesse o token da API leria qualquer arquivo do
+        # container passando "/etc/shadow" como audio_url.
+        origem = Path(url.removeprefix("file://")).resolve()
+        permitido = CONFIG.local_input_dir.resolve()
+        if not origem.is_relative_to(permitido):
+            raise ValueError(
+                f"caminho local fora de {permitido}: {origem}. "
+                "Use uma URL https ou envie o arquivo para lá.")
+        if not origem.is_file():
+            raise FileNotFoundError(f"não existe: {origem}")
+
+        shutil.copy2(origem, destino)
+        log.info("entrada local copiada: %s", origem)
         return destino
 
     @staticmethod

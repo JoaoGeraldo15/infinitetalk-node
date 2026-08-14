@@ -83,6 +83,12 @@ class Config:
     work_dir: Path = Path(_env("WORK_DIR", "/workspace/adapter-work"))
     jobs_dir: Path = Path(_env("JOBS_DIR", "/workspace/adapter-jobs"))
 
+    # Única pasta de onde o job aceita ler arquivo local em vez de URL. Serve
+    # para testar com arquivos enviados pelo Jupyter antes de a plataforma
+    # existir. É uma cerca, não uma conveniência: sem ela, quem tivesse o token
+    # da API leria qualquer arquivo do container.
+    local_input_dir: Path = Path(_env("LOCAL_INPUT_DIR", "/workspace"))
+
     # ── API ───────────────────────────────────────────────────────────
     port: int = _int("ADAPTER_PORT", 18000)
 
