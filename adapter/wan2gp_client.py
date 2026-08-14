@@ -129,6 +129,16 @@ class Wan2GPClient:
         #   "E" → image_end           ·   "V" → video_guide / image_guide
         s["audio_guide"] = str(audio)          # "Voice to follow" na UI
 
+        # A imagem de REFERÊNCIA vale para todo pedaço, encadeado ou não: é ela
+        # que fixa a identidade da pessoa. O "I" em video_prompt_type ("0KI|")
+        # a torna obrigatória — foi por isso que a UI a exigiu na Fase 0b.
+        #
+        # ⚠️ Até 2026-08-14 esta linha estava só no ramo do primeiro pedaço, e
+        # TODO pedaço encadeado morria na validação com
+        # "You must provide at least one Reference Image". Custou uma sessão
+        # inteira de GPU descobrir.
+        s["image_refs"] = [str(imagem)]
+
         if video_anterior is not None:
             # Encadeamento: "L" faz o Wan2GP continuar do pedaço anterior.
             # `image_start` sai de cena — quem define o ponto de partida agora
@@ -137,12 +147,9 @@ class Wan2GPClient:
             s["video_source"] = str(video_anterior)
             s.pop("image_start", None)
         else:
-            # Primeiro pedaço: parte da foto. "S" exige image_start; o "I" em
-            # video_prompt_type ("0KI|") é o que exige image_refs — foi por
-            # isso que a UI reclamou de imagem de referência na Fase 0b.
+            # Primeiro pedaço: parte da foto. "S" exige image_start.
             s["image_prompt_type"] = "S"
             s["image_start"] = str(imagem)
-            s["image_refs"] = [str(imagem)]
             s.pop("video_source", None)
         return s
 
@@ -177,10 +184,36 @@ class Wan2GPClient:
         segundos = time.perf_counter() - t0
         arquivos = getattr(resultado, "generated_files", None) or []
         if not getattr(resultado, "success", False) or not arquivos:
-            erro = getattr(resultado, "error", None) or "sem arquivo gerado"
-            return GeracaoResultado(False, erro=str(erro), segundos=segundos)
+            return GeracaoResultado(False, erro=self._extrair_erro(resultado),
+                                    segundos=segundos)
 
-        return GeracaoResultado(True, arquivo=Path(arquivos[0]), segundos=segundos)
+        # ⚠️ arquivos[-1], NUNCA arquivos[0]. O Wan2GP grava um arquivo por
+        # janela deslizante, cada um mais longo que o anterior — o último é o
+        # vídeo completo. Até 2026-08-14 este código pegava o [0] e devolvia
+        # só os 81 frames da primeira janela: um pedaço de 29,5 s virava um
+        # arquivo de 3,24 s, medido na primeira sessão real.
+        return GeracaoResultado(True, arquivo=Path(arquivos[-1]), segundos=segundos)
+
+    @staticmethod
+    def _extrair_erro(resultado) -> str:
+        """Mensagem de erro do Wan2GP.
+
+        ⚠️ O atributo é `errors` (LISTA de GenerationError), não `error`. Eu
+        lia `error`, que não existe, e todo job falhava com o inútil "sem
+        arquivo gerado" — a mensagem real ("You must provide at least one
+        Reference Image") só apareceu inspecionando `dir(resultado)` na mão,
+        com a GPU ligada. Um erro de diagnóstico custa mais que o bug.
+        """
+        erros = getattr(resultado, "errors", None) or []
+        partes = []
+        for e in erros:
+            msg = getattr(e, "message", None) or str(e)
+            estagio = getattr(e, "stage", None)
+            partes.append(f"[{estagio}] {msg}" if estagio else str(msg))
+        if partes:
+            return " · ".join(partes)
+        # Fallbacks, caso a API mude de forma outra vez.
+        return str(getattr(resultado, "error", None) or "sem arquivo gerado")
 
     @staticmethod
     def _bombear_eventos(job, on_progress) -> None:

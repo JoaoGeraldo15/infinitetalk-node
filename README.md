@@ -235,17 +235,39 @@ cola no dashboard. Um minuto.
 As 3 proporções que faltavam (`4:5`, `2:3`, `3:2`) são geradas na nativa mais
 próxima e recortadas com ffmpeg em `pipeline.recortar()`.
 
+### Primeira sessão real — 2026-08-14, RTX 4090 (Oregon)
+
+Funcionou de ponta a ponta: `bootstrap.sh` instalou o adapter, a detecção do
+Python acertou no primeiro candidato (`/venv/main/bin/python`, torch
+2.7.1+cu128), a API respondeu `ready`, um áudio de 101,88 s foi fatiado em
+**4 pedaços** e o pedaço 0 gerou vídeo.
+
+O **pedaço 1 falhou**, e três defeitos meus vieram à tona:
+
+| Defeito | Correção |
+|---|---|
+| `image_refs` só era definido no ramo do primeiro pedaço → **todo** pedaço encadeado morria com `You must provide at least one Reference Image` | passou a valer nos dois ramos |
+| `gerar()` lia `resultado.error`, que não existe — o atributo é **`errors`**, uma lista de `GenerationError`. Todo erro virava "sem arquivo gerado" | `_extrair_erro()` |
+| `provision.sh` tinha `\|\| true` nos downloads: reportou sucesso com **0 byte** baixado, e o primeiro job pagou os 33 GB | falha alto, com diagnóstico |
+| `stdout_logfile=/dev/stdout` → `supervisorctl tail adapter` responde "unknown error reading log" | `/var/log/portal/adapter.log` |
+| `gerar()` devolvia `generated_files[0]`. O Wan2GP grava **um arquivo por janela deslizante**, e o último é o completo — o pedaço de 29,5 s virava um `.mp4` de **3,24 s** (81 frames, a 1ª janela) | `generated_files[-1]` |
+| A saída encadeada **inclui o vídeo de origem** colado na frente (fonte 3,24 s + áudio 29,1 s = saída 32,36 s). Concatenar direto duplicaria cada pedaço | `pipeline.cortar_inicio()` remove o prefixo; o resultado cortado vira a origem do pedaço seguinte, o que também impede a origem de crescer a cada pedaço |
+
+Confirmado na mesma sessão: com `image_refs` presente, o encadeamento retorna
+`success: True`. E o InfiniteTalk deriva a duração do **áudio**, não do
+`video_length` que mandamos.
+
+Medição: pedaço 0 levou 970 s **incluindo** os 33 GB de download; o pedaço 1
+rodou ~900 s para ~29,5 s de vídeo, ou seja **~30x tempo real** (Fase 0b:
+25,5x num host diferente).
+
 ### Ainda não verificado
 
-Sobraram **dois**, e só o primeiro precisa de GPU:
-
-- O **encadeamento** entre pedaços: se `image_prompt_type="L"` + `video_source`
-  produz emenda invisível. O `settings_base.json` mostra
-  `sliding_window_overlap: 9`, então o mecanismo existe — falta ver o resultado.
-  **Exige gerar de verdade.** Um teste de 2 pedaços de ~10 s custa ~$0,05.
+- Se a emenda entre pedaços é **invisível**. A correção do `image_refs` foi
+  validada isoladamente, mas nenhum vídeo com 2+ pedaços concatenados foi
+  assistido ainda.
 - Se o Wan2GP aceita **mais de 737 frames** pela API. O teto pode ser só do
   slider do Gradio; se for, o encadeamento some e o adapter simplifica muito.
-  Sai de graça no mesmo teste acima: manda 900 frames e vê se recusa.
-
-Ambos vivem em `wan2gp_client.py` — o único arquivo a ajustar depois do
-primeiro job real.
+- O progresso **dentro** de um pedaço: `_bombear_eventos` não recebeu nenhum
+  evento — a barra pula de 25 em 25%. Os nomes `evento.kind` / `data.progress`
+  provavelmente estão errados, do mesmo jeito que `error`/`errors` estava.

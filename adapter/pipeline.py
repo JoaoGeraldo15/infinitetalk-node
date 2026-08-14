@@ -141,6 +141,24 @@ def concatenar(videos: list[Path], destino: Path) -> Path:
     return destino
 
 
+def cortar_inicio(video: Path, segundos: float, destino: Path) -> Path:
+    """Remove os primeiros `segundos` do vídeo.
+
+    Serve ao encadeamento. Quando geramos um pedaço com `video_source`, o
+    Wan2GP devolve **a origem seguida do trecho novo** — medido na primeira
+    sessão real: fonte de 3,24 s + áudio de 29,1 s = saída de 32,36 s.
+    Concatenar essas saídas direto duplicaria cada pedaço.
+
+    Cortando aqui, o resultado carrega só o trecho novo, e ele vira a origem do
+    pedaço seguinte — o que também mantém a origem com tamanho constante em vez
+    de crescer a cada pedaço até estourar.
+    """
+    _run(["ffmpeg", "-y", "-loglevel", "error", "-ss", f"{segundos:.3f}",
+          "-i", str(video), "-c:v", "libx264", "-crf", "18", "-preset", "medium",
+          "-c:a", "aac", "-b:a", "192k", str(destino)])
+    return destino
+
+
 def recortar(video: Path, alvo: str, destino: Path) -> Path:
     """Recorta o quadro para uma proporção que o Wan2GP não gera nativamente.
 

@@ -61,10 +61,30 @@ baixar() {
 
 # Os IDs abaixo são configuráveis por variável de ambiente: trocar de modelo
 # não exige rebuild da imagem.
-baixar "${HF_INFINITETALK:-MeiGen-AI/InfiniteTalk}" "$CKPTS/InfiniteTalk" || true
+falhas=0
+baixar "${HF_INFINITETALK:-MeiGen-AI/InfiniteTalk}" "$CKPTS/InfiniteTalk" || falhas=$((falhas+1))
 baixar "${HF_LORA:-lightx2v/Wan2.1-I2V-14B-480P-StepDistill-CfgDistill-Lightx2v}" \
        "$CKPTS/loras" \
-       --include "${LORA_FILE:-Wan21_I2V_14B_lightx2v_cfg_step_distill_lora_rank64.safetensors}" || true
+       --include "${LORA_FILE:-Wan21_I2V_14B_lightx2v_cfg_step_distill_lora_rank64.safetensors}" \
+       || falhas=$((falhas+1))
 
-log "pesos em disco: $(du -sh "$CKPTS" 2>/dev/null | cut -f1)"
+# ⚠️ Até 2026-08-14 havia `|| true` nas duas linhas acima, e este script
+# reportava "concluído" com ZERO byte baixado — foi o que aconteceu na primeira
+# sessão real. O adapter subia `ready`, e o download de 20 GB só acontecia no
+# meio do primeiro job, inflando a medição. Falhar aqui é o ponto: é barato
+# descobrir agora e caro descobrir com o cliente esperando.
+baixados=$(du -sb "$CKPTS" 2>/dev/null | cut -f1)
+baixados=${baixados:-0}
+log "pesos em disco: $(numfmt --to=iec "$baixados" 2>/dev/null || echo "$baixados B")"
+
+if [ "$falhas" -gt 0 ] || [ "$baixados" -lt 1000000000 ]; then
+  warn "PROVISIONAMENTO INCOMPLETO: ${falhas} download(s) falharam e só há"
+  warn "$(numfmt --to=iec "$baixados" 2>/dev/null || echo "$baixados") em ${CKPTS}."
+  warn "Causas comuns: HF_TOKEN inválido ou ausente · repositório gated sem"
+  warn "aceite · sem espaço em disco. Veja as mensagens acima."
+  warn "O adapter vai subir mesmo assim — o Wan2GP baixa sob demanda —, mas o"
+  warn "PRIMEIRO job pagará o download inteiro."
+  exit 1
+fi
+
 log "provisionamento concluído"

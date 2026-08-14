@@ -23,7 +23,8 @@ from pathlib import Path
 import httpx
 
 from config import CONFIG
-from pipeline import anexar_audio, concatenar, duracao, fatiar_audio, recortar
+from pipeline import (anexar_audio, concatenar, cortar_inicio, duracao,
+                      fatiar_audio, recortar)
 from wan2gp_client import CLIENTE
 
 log = logging.getLogger("adapter.jobs")
@@ -187,6 +188,16 @@ class Fila:
 
             destino = dir_job / f"parte_{pedaco.indice:03d}.mp4"
             resultado.arquivo.replace(destino)
+
+            if anterior is not None:
+                # A saída encadeada traz a origem colada na frente. Cortamos os
+                # segundos da origem para sobrar só o trecho novo — senão a
+                # concatenação repetiria cada pedaço. Ver pipeline.cortar_inicio.
+                origem_segundos = duracao(anterior)
+                cortado = dir_job / f"parte_{pedaco.indice:03d}_novo.mp4"
+                cortar_inicio(destino, origem_segundos, cortado)
+                destino = cortado
+
             videos.append(destino)
             anterior = destino
             job.progress = (pedaco.indice + 1) / len(pedacos)
