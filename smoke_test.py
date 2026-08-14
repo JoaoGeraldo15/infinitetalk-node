@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
 """Teste de fumaça do nó — roda do seu notebook contra a máquina alugada.
 
+    export ADAPTER_TOKEN=<o mesmo token do template>
     python3 smoke_test.py \
         --url https://<IP>:<PORTA_8000> \
-        --token <ADAPTER_TOKEN> \
         --audio /workspace/teste.wav \
         --image /workspace/avatar.png
+
+⚠️ O token vem da variável de ambiente, NUNCA escrito aqui: este arquivo mora
+num repositório público. Um token no código seria lido por qualquer um, e quem
+o tiver enfileira jobs na sua GPU alugada e baixa seus vídeos.
+(`--token` ainda existe, mas fica no histórico do shell — prefira o export.)
 
 `--audio` e `--image` são caminhos DENTRO da máquina (envie pelo Jupyter para
 /workspace) ou URLs https. O adapter aceita os dois.
@@ -17,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import ssl
 import sys
 import time
@@ -44,7 +50,8 @@ def chamar(url: str, token: str, metodo: str = "GET", corpo: dict | None = None,
 def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--url", required=True, help="https://IP:PORTA (porta externa 8000)")
-    p.add_argument("--token", required=True)
+    p.add_argument("--token", default=os.environ.get("ADAPTER_TOKEN", ""),
+                   help="padrão: variável de ambiente ADAPTER_TOKEN")
     p.add_argument("--audio", required=True)
     p.add_argument("--image", required=True)
     p.add_argument("--aspect", default="9:16")
@@ -52,6 +59,10 @@ def main() -> int:
     p.add_argument("--saida", default="resultado.mp4")
     a = p.parse_args()
     base = a.url.rstrip("/")
+
+    if not a.token:
+        print("✗ token ausente. Rode:  export ADAPTER_TOKEN=<token do template>")
+        return 1
 
     # ── 1. o nó está pronto? ──────────────────────────────────────────
     print("1) /healthz ...", end=" ", flush=True)
