@@ -161,6 +161,31 @@ class Fila:
         steps = int(opcoes.get("steps") or CONFIG.steps)
 
         pedacos = fatiar_audio(audio_wav, dir_job / "chunks")
+
+        # ⚠️ O ENCADEAMENTO ESTÁ DESATIVADO, de propósito.
+        #
+        # Com `image_prompt_type="L"` + `video_source`, o Wan2GP continua o
+        # vídeo e respeita a duração do áudio — mas NÃO aplica lip-sync ao
+        # trecho novo: o avatar fica piscando e respirando enquanto a narração
+        # corre. Medido em 2026-08-17, num vídeo de 47,9 s: perfeito até os
+        # 29,5 s, mudo daí em diante.
+        #
+        # É o pior tipo de defeito, porque o vídeo *parece* bom. Recusar é
+        # melhor que entregar metade da narração muda. Com MAX_FRAMES em 6000
+        # (4 min) isto praticamente não acontece; se acontecer, o caminho é
+        # aumentar o teto, não voltar a encadear.
+        if len(pedacos) > 1:
+            job.status = FALHOU
+            job.error = (
+                f"Áudio de {duracao(audio_wav):.0f}s excede o limite de "
+                f"{CONFIG.max_chunk_seconds():.0f}s por geração. Dividir em "
+                "pedaços encadeados produziria vídeo sem lip-sync na segunda "
+                "metade, então preferimos recusar. Aumente MAX_FRAMES no nó, "
+                "ou use um áudio mais curto."
+            )
+            log.error("job %s recusado: %d pedaços", job.id, len(pedacos))
+            return
+
         job.message = f"0/{len(pedacos)} pedaços"
         self._salvar(job)
 

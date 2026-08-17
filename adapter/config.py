@@ -69,9 +69,25 @@ class Config:
     hf_revision: str = _env("HF_REVISION", "")
 
     # ── Limites medidos ───────────────────────────────────────────────
-    # ⚠️ 737 frames (~29,5 s a 25 fps) é o teto por geração no Wan2GP v12.452.
-    # Vídeos maiores são fatiados e encadeados — ver pipeline.py.
-    max_frames: int = _int("MAX_FRAMES", 737)
+    # Frames por geração. 6000 = 4 minutos a 25 fps.
+    #
+    # ⚠️ Aqui havia 737, que eu li do SLIDER DO GRADIO e confundi com limite da
+    # API. Não é: a janela deslizante do InfiniteTalk é justamente o mecanismo
+    # de vídeo longo — 81 frames por vez com 9 de sobreposição, VRAM constante.
+    # Testado em 2026-08-17: 1198 frames numa geração só, 17 janelas, lip-sync
+    # do início ao fim.
+    #
+    # O 737 custou caro: forçava fatiar e encadear, e o modo de continuação do
+    # Wan2GP gera movimento ocioso SEM lip-sync no trecho novo. O vídeo saía
+    # com metade da narração muda, parecendo correto.
+    #
+    # Por que 6000 e não ilimitado — três custos que crescem com a duração:
+    #   · disco: o Wan2GP grava um arquivo por janela, cada um com o vídeo
+    #     inteiro até ali. São ~2,7 MB por janela acumulados ao quadrado —
+    #     9 janelas ≈ 110 MB, mas 125 janelas ≈ 21 GB;
+    #   · deriva: o rosto pode mudar devagar ao longo de muitas janelas;
+    #   · custo da falha: uma geração longa que morre no fim perde tudo.
+    max_frames: int = _int("MAX_FRAMES", 6000)
     fps: int = _int("FPS", 25)
 
     # Sobreposição entre pedaços consecutivos. O InfiniteTalk usa janela
