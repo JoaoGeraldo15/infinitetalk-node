@@ -23,8 +23,10 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
 import threading
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -78,11 +80,45 @@ class Wan2GPClient:
                 self._base = {}
 
             sys.path.insert(0, str(CONFIG.wan2gp_root))
-            from shared.api import init  # noqa: PLC0415
 
-            log.info("iniciando sessão do Wan2GP em %s", CONFIG.wan2gp_root)
-            self._session = init(root=CONFIG.wan2gp_root)
+            # ⚠️ O `wgp.py` do Wan2GP faz `os.mkdir("settings")` no nível do
+            # módulo, SEM exist_ok — e importar `shared.api` importa o wgp.
+            # Resultado: na primeira vez o diretório é criado e tudo funciona;
+            # em QUALQUER carga seguinte ele explode com FileExistsError e o
+            # adapter nunca fica pronto.
+            #
+            # É o mesmo bug que derruba o serviço Gradio da própria imagem do
+            # Vast (`/var/log/portal/wan2gp.log` mostra o mesmo traceback). Na
+            # primeira sessão em GPU eu concluí que não nos afetava porque
+            # rodamos noutro diretório de trabalho — funcionou por sorte, e
+            # quebrou no primeiro restart da segunda máquina.
+            #
+            # Tolerar o mkdir durante o import é cirúrgico e reversível;
+            # apagar o diretório apagaria estado do Wan2GP.
+            with self._mkdir_tolerante():
+                from shared.api import init  # noqa: PLC0415
+
+                log.info("iniciando sessão do Wan2GP em %s", CONFIG.wan2gp_root)
+                self._session = init(root=CONFIG.wan2gp_root)
             log.info("sessão pronta")
+
+    @staticmethod
+    @contextmanager
+    def _mkdir_tolerante():
+        """Faz `os.mkdir` ignorar FileExistsError, e restaura ao sair."""
+        original = os.mkdir
+
+        def mkdir(caminho, *args, **kwargs):
+            try:
+                original(caminho, *args, **kwargs)
+            except FileExistsError:
+                log.debug("mkdir tolerado: %s já existe", caminho)
+
+        os.mkdir = mkdir
+        try:
+            yield
+        finally:
+            os.mkdir = original
 
     @property
     def pronto(self) -> bool:
