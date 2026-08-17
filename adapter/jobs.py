@@ -187,7 +187,19 @@ class Fila:
                 return
 
             destino = dir_job / f"parte_{pedaco.indice:03d}.mp4"
-            resultado.arquivo.replace(destino)
+            # ⚠️ COPIAR, nunca mover. Aqui havia `resultado.arquivo.replace()`,
+            # que renomeia — e tirava o arquivo de `Wan2GP/outputs/`.
+            #
+            # O Wan2GP guarda referência aos arquivos que gerou e passa por eles
+            # quando a tarefa seguinte começa. Sem o arquivo no lugar, o pedaço
+            # SEGUINTE morria com "[generation] ffprobe skipped; file not found:
+            # outputs/....mp4" — apontando para um arquivo que nós mesmos
+            # levamos embora. Medido em 2026-08-17: o pedaço 0 concluía, e o
+            # pedaço 1 estourava 13 s depois de começar, na preparação.
+            #
+            # O custo de copiar é alguns MB por pedaço, num disco de 256 GB que
+            # morre junto com a sessão.
+            shutil.copy2(resultado.arquivo, destino)
 
             if anterior is not None:
                 # A saída encadeada traz a origem colada na frente. Cortamos os
