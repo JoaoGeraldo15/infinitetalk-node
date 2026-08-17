@@ -267,14 +267,34 @@ class Wan2GPClient:
 
     @staticmethod
     def _bombear_eventos(job, on_progress) -> None:
-        """Repassa os eventos de progresso. Falha aqui nunca derruba o job."""
+        """Repassa os eventos de progresso. Falha aqui nunca derruba o job.
+
+        Duas correções de 2026-08-17, ambas erros meus que deixavam a barra de
+        progresso da plataforma parada — o vídeo ficava pronto com ~14% na tela:
+
+        1. `ProgressUpdate.progress` é **percentual (0–100)**, não fração. Eu o
+           tratava como fração; qualquer valor acima de 1 virava 100% depois do
+           clamp.
+        2. `events.iter(timeout=...)` **encerra** quando o timeout expira. Com
+           `timeout=0.5`, a thread lia por meio segundo, não via nada (a carga
+           do modelo leva minutos) e morria. Sem timeout, o iterador acompanha
+           o job até o fim.
+
+        Estrutura confirmada no fonte do Wan2GP (`shared/api.py`):
+            SessionEvent(kind: str, data: Any, timestamp: float)
+            ProgressUpdate(phase, status, progress: int, current_step,
+                           total_steps, raw_phase, unit)
+        """
         try:
-            for evento in job.events.iter(timeout=0.5):
-                if getattr(evento, "kind", None) == "progress":
-                    dados = getattr(evento, "data", None)
-                    fracao = getattr(dados, "progress", None)
-                    if fracao is not None:
-                        on_progress(float(fracao))
+            for evento in job.events.iter():
+                if getattr(evento, "kind", None) != "progress":
+                    continue
+                dados = getattr(evento, "data", None)
+                valor = getattr(dados, "progress", None)
+                if valor is None:
+                    continue
+                fracao = max(0.0, min(1.0, float(valor) / 100.0))
+                on_progress(fracao, getattr(dados, "phase", None))
         except Exception:  # noqa: BLE001
             log.debug("stream de eventos encerrado", exc_info=True)
 

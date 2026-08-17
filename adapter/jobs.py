@@ -194,9 +194,13 @@ class Fila:
         t0 = time.perf_counter()
 
         for pedaco in pedacos:
-            def progresso(fracao: float, i=pedaco.indice, n=len(pedacos)) -> None:
+            def progresso(fracao: float, fase: str | None = None,
+                          i=pedaco.indice, n=len(pedacos)) -> None:
                 job.progress = (i + max(0.0, min(1.0, fracao))) / n
-                job.message = f"{i + 1}/{n} pedaços"
+                # A fase vem do Wan2GP ("loading", "denoising"…) e é o que dá
+                # ao usuário a sensação de que algo acontece durante os ~20 min
+                # de geração. Sem ela a mensagem era sempre "1/1 pedaços".
+                job.message = fase or "gerando"
 
             settings_wan = CLIENTE.montar_settings(
                 imagem=imagem, audio=pedaco.audio, frames=pedaco.frames,
