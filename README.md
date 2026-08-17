@@ -261,6 +261,24 @@ Medição: pedaço 0 levou 970 s **incluindo** os 33 GB de download; o pedaço 1
 rodou ~900 s para ~29,5 s de vídeo, ou seja **~30x tempo real** (Fase 0b:
 25,5x num host diferente).
 
+### Segunda sessão — 2026-08-17, RTX 5090, **pela plataforma**
+
+Primeira geração disparada pela esteira em vez de à mão. Mais três defeitos:
+
+| Defeito | Correção |
+|---|---|
+| `wgp.py` faz `os.mkdir("settings")` sem `exist_ok`, e importar `shared.api` importa o wgp. Funcionou na 1ª máquina por sorte (o diretório não existia); no primeiro restart da 2ª, o adapter nunca mais ficou pronto | `_mkdir_tolerante()` durante o import |
+| O Caddy da imagem do Vast aceita `Authorization: Bearer <OPEN_BUTTON_TOKEN>` — **o mesmo header** que o adapter usa. As duas credenciais brigavam e o proxy devolvia 401 sem o pedido chegar ao adapter | plataforma manda o token do proxy na **query** (`?token=`), que o Caddyfile também aceita, e o do adapter no header |
+| O Wan2GP grava as saídas em `outputs/` **relativo ao cwd**, e procura pelo mesmo caminho. Rodando de `/opt/node/adapter`, o job morria com `ffprobe skipped; file not found` — depois de 12 min de GPU paga | `adapter.sh` roda a partir de `$WAN2GP_ROOT` com `PYTHONPATH` para o adapter; `gerar()` também resolve caminho relativo |
+
+⚠️ `init(root=...)` diz onde estão os **modelos**, não onde ele escreve. Assumi o
+contrário duas vezes.
+
+Ritmo medido na 5090: **~25x tempo real** — praticamente igual à 4090, apesar
+do dobro de `dlperf`. O gargalo é o offload dos pesos do modelo de 14B, não o
+poder bruto da GPU. Placa mais cara não compra velocidade aqui; o que importa é
+VRAM suficiente e PCIe rápido.
+
 ### Ainda não verificado
 
 - Se a emenda entre pedaços é **invisível**. A correção do `image_refs` foi

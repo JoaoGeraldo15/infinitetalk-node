@@ -228,7 +228,21 @@ class Wan2GPClient:
         # vídeo completo. Até 2026-08-14 este código pegava o [0] e devolvia
         # só os 81 frames da primeira janela: um pedaço de 29,5 s virava um
         # arquivo de 3,24 s, medido na primeira sessão real.
-        return GeracaoResultado(True, arquivo=Path(arquivos[-1]), segundos=segundos)
+        arquivo = Path(arquivos[-1])
+
+        # O Wan2GP às vezes devolve caminho RELATIVO ("outputs/....mp4"),
+        # relativo ao cwd do processo. O adapter.sh já roda a partir da raiz do
+        # Wan2GP justamente por isso, mas resolver aqui também torna o cliente
+        # imune a quem o inicia — e o custo é uma linha.
+        if not arquivo.is_absolute():
+            arquivo = (CONFIG.wan2gp_root / arquivo).resolve()
+
+        if not arquivo.exists():
+            return GeracaoResultado(
+                False, segundos=segundos,
+                erro=f"o Wan2GP relatou sucesso mas o arquivo não existe: {arquivo}")
+
+        return GeracaoResultado(True, arquivo=arquivo, segundos=segundos)
 
     @staticmethod
     def _extrair_erro(resultado) -> str:

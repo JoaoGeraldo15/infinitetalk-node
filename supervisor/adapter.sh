@@ -17,8 +17,21 @@ if [ ! -f "$MARCA" ]; then
   "$RAIZ/provision.sh" && touch "$MARCA"
 fi
 
-# cd porque o adapter usa imports planos (`from config import CONFIG`).
-cd "$RAIZ/adapter" || exit 1
+# ⚠️ O diretório de trabalho precisa ser a RAIZ DO WAN2GP, não a do adapter.
+#
+# O Wan2GP grava os vídeos em `outputs/` relativo ao cwd do processo, e depois
+# procura o arquivo pelo mesmo caminho relativo. Rodando de /opt/node/adapter,
+# ele salvava em /opt/node/adapter/outputs e o probe interno falhava com
+# "ffprobe skipped; file not found: outputs/....mp4" — o job morria DEPOIS de
+# 12 minutos de GPU paga (medido em 2026-08-17).
+#
+# Passar `init(root=...)` não resolve: esse parâmetro diz onde estão os
+# modelos, não onde ele escreve as saídas.
+cd "${WAN2GP_ROOT:-/workspace/Wan2GP}" || exit 1
+
+# E como o cwd deixou de ser a pasta do adapter, os imports planos dele
+# (`from config import CONFIG`) precisam do PYTHONPATH.
+export PYTHONPATH="$RAIZ/adapter${PYTHONPATH:+:$PYTHONPATH}"
 
 # 127.0.0.1 de propósito: quem expõe para fora é o Caddy da base-image, que
 # põe TLS e autenticação na frente. Ver PORTAL_CONFIG no README.
