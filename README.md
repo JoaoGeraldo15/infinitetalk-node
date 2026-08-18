@@ -137,20 +137,50 @@ na frente do adapter — sem isso a API fica em HTTP puro.
 
 ### `ADAPTER_TOKEN`: o segredo da API
 
-⚠️ **Não é o `OPEN_BUTTON_TOKEN`.** Este README dizia que era; está errado. O
-template do Vast define `OPEN_BUTTON_TOKEN=1` — é uma **flag booleana**, não um
-segredo. Usá-la deixaria a API do nó protegida pelo token `1`, num IP público.
+⚠️ **Não é o `OPEN_BUTTON_TOKEN`** — mas não pelo motivo que este README deu
+antes. Eu escrevi que o `=1` era "flag booleana, não segredo"; é meio verdade:
+o `=1` **pede**, e o Vast substitui por um token real de 64 hex no lançamento
+(visto em 2026-08-17 no Caddyfile da máquina).
+
+O motivo real de manter separado: esse token é a senha do **portal** — o mesmo
+que abre o Jupyter e o terminal web. Usá-lo na API do adapter daria à
+plataforma uma credencial de acesso total ao host.
+
+Os dois convivem: o Caddy aceita o dele na query (`?token=`), o adapter aceita
+o seu no header `Authorization`.
 
 Sem `ADAPTER_TOKEN`, o adapter sorteia um token por sessão e o imprime no log.
 Funciona, mas obriga a ler o log a cada máquina — defina no template.
 
-### Opcionais
+### Auto-registro
+
+Com estas duas, a máquina se anuncia sozinha à plataforma no boot e **você não
+cola URL nem token em lugar nenhum**:
 
 ```
-BACKEND_URL   = https://sua-plataforma.com    # auto-registro (Fase 3)
-BACKEND_TOKEN = ...                           # escopo: só /gpu-nodes/register
-HF_REVISION   = <commit>                      # congela os pesos
-WAN2GP_PYTHON = /venv/main/bin/python         # só se a detecção falhar
+BACKEND_URL   = https://app.papodecontribuinte.com.br
+BACKEND_TOKEN = <mesmo valor do GPU_NODE_REGISTER_TOKEN da plataforma>
+```
+
+O nó envia URL pública, o token do adapter e o **token do proxy**
+(`OPEN_BUTTON_TOKEN`, gerado pelo Vast por instância — sem ele a plataforma
+receberia um endereço que não consegue usar).
+
+Se a plataforma não responder, tenta 6 vezes com espera crescente: a máquina
+passa ~25 min baixando modelos antes de chegar nesse ponto, e nesse intervalo a
+plataforma pode ter reiniciado. Depois de registrado, reanuncia a cada 5 min —
+o registro é idempotente, então reanunciar **é** o sinal de vida.
+
+Sem `BACKEND_URL` nada disso acontece: o log imprime o endereço do nó e você o
+cadastra à mão.
+
+### Outros opcionais
+
+```
+HF_REVISION      = <commit>                # congela os pesos
+WAN2GP_PYTHON    = /venv/main/bin/python   # só se a detecção falhar
+HEARTBEAT_SECONDS= 300                     # intervalo do reanúncio
+MAX_FRAMES       = 6000                    # 4 min por geração
 ```
 
 ⚠️ `ADAPTER_REPO` é obrigatório; sem ele o `bootstrap.sh` aborta na primeira

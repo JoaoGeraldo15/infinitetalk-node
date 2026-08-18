@@ -1,6 +1,6 @@
 """API do nó de GPU — o contrato que a plataforma consome.
 
-Rotas (todas exigem `Authorization: Bearer <OPEN_BUTTON_TOKEN>`):
+Rotas (todas exigem `Authorization: Bearer <ADAPTER_TOKEN>`, exceto /healthz):
 
     GET    /healthz                        pronto?
     POST   /jobs                           enfileira um vídeo
@@ -20,6 +20,7 @@ import logging
 import os
 import secrets
 import threading
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -82,25 +83,23 @@ def _preparar() -> None:
         FILA.iniciar()
         ESTADO["status"] = "ready"
         log.info("nó PRONTO")
-        _registrar_na_plataforma()
+        # Thread própria: _registrar_na_plataforma nunca retorna (laço de
+        # heartbeat), e prendê-la aqui deixaria o nó sem servir.
+        threading.Thread(target=_registrar_na_plataforma, daemon=True).start()
     except Exception:  # noqa: BLE001
         ESTADO["status"] = "failed"
         log.exception("falha ao preparar o nó")
 
 
-def _registrar_na_plataforma() -> None:
-    """Avisa a plataforma onde este nó está.
-
-    Opcional: sem BACKEND_URL, o operador cola o endereço no dashboard.
-    Útil quando a plataforma não está exposta na internet.
-    """
-    if not CONFIG.backend_url:
-        log.info("BACKEND_URL vazio — registro manual. URL deste nó: %s",
-                 CONFIG.public_url or "(desconhecida)")
-        return
+def _registrar_uma_vez() -> bool:
+    """Anuncia este nó à plataforma. Devolve se deu certo."""
     payload = {
         "url": CONFIG.public_url,
         "token": CONFIG.auth_token,
+        # ⚠️ Sem o token do proxy a plataforma recebe uma URL inutilizável: o
+        # Caddy da imagem do Vast devolve 401 e o pedido nem chega ao adapter.
+        # Ele é gerado por instância, então só o próprio nó sabe qual é.
+        "portal_token": CONFIG.portal_token,
         "container_id": CONFIG.container_id,
         "model_type": CONFIG.model_type,
     }
@@ -110,10 +109,57 @@ def _registrar_na_plataforma() -> None:
             json=payload, timeout=30,
             headers={"Authorization": f"Bearer {CONFIG.backend_token}"},
         )
-        log.info("registro na plataforma: HTTP %s", r.status_code)
     except Exception as exc:  # noqa: BLE001
-        log.warning("registro falhou (%s) — use o cadastro manual: %s",
-                    exc, CONFIG.public_url)
+        log.warning("registro falhou: %s", exc)
+        return False
+
+    if r.status_code == 200:
+        return True
+    # Erros de configuração não melhoram com repetição — logue o motivo, que a
+    # plataforma manda por extenso (URL recusada, segredo errado...).
+    log.warning("plataforma recusou o registro: HTTP %s — %s",
+                r.status_code, r.text[:300])
+    return False
+
+
+def _registrar_na_plataforma() -> None:
+    """Registra o nó e segue reanunciando como sinal de vida.
+
+    Sem BACKEND_URL não faz nada: o operador cola o endereço no painel. Útil em
+    desenvolvimento, ou se a plataforma não estiver exposta na internet.
+
+    Por que insistir: a máquina leva ~25 min baixando modelos antes de chegar
+    aqui, e nesse intervalo a plataforma pode ter reiniciado. Uma tentativa
+    única deixaria o nó órfão, e a usuária só descobriria ao tentar gerar.
+
+    Por que continuar reanunciando: o registro é idempotente (upsert por
+    container_id), então reanunciar é o sinal de vida — é assim que a
+    plataforma distingue uma máquina no ar de um registro de sessão passada.
+    """
+    if not CONFIG.backend_url:
+        log.info("BACKEND_URL vazio — registro manual. URL deste nó: %s",
+                 CONFIG.public_url or "(desconhecida)")
+        return
+    if not CONFIG.public_url:
+        log.error("PUBLIC_IPADDR/VAST_TCP_PORT_8000 ausentes: o nó não sabe o "
+                  "próprio endereço e não tem como se registrar.")
+        return
+
+    espera = 5
+    for tentativa in range(1, 7):
+        if _registrar_uma_vez():
+            log.info("registrado na plataforma: %s", CONFIG.public_url)
+            break
+        log.info("nova tentativa de registro em %ds (%d/6)", espera, tentativa)
+        time.sleep(espera)
+        espera = min(espera * 2, 120)
+    else:
+        log.error("não foi possível registrar após 6 tentativas. O nó funciona, "
+                  "mas precisa ser cadastrado à mão: %s", CONFIG.public_url)
+
+    while True:
+        time.sleep(CONFIG.heartbeat_segundos)
+        _registrar_uma_vez()
 
 
 @asynccontextmanager

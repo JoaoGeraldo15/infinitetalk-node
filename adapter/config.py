@@ -133,6 +133,21 @@ class Config:
     backend_url: str = _env("BACKEND_URL", "")
     backend_token: str = _env("BACKEND_TOKEN", "")
 
+    # Credencial do Caddy que a imagem do Vast põe na frente do adapter. A
+    # plataforma precisa dela para atravessar o proxy: ele aceita `?token=` na
+    # query, enquanto o adapter usa o header Authorization. Sem enviar isto no
+    # registro, a plataforma receberia uma URL que não consegue usar — 401 sem
+    # o pedido nem chegar ao adapter (medido em 2026-08-17).
+    #
+    # O Vast gera um valor de 64 hex por instância; o `=1` que se põe no
+    # template é o PEDIDO de geração, não o valor.
+    portal_token: str = _env("OPEN_BUTTON_TOKEN", "")
+
+    # De quanto em quanto tempo reanunciar-se. O registro é idempotente
+    # (upsert por container_id), então reanunciar É o sinal de vida: a
+    # plataforma sabe que a máquina ainda existe pelo last_seen_at.
+    heartbeat_segundos: int = _int("HEARTBEAT_SECONDS", 300)
+
     # Injetados pelo Vast.ai no container — é assim que o nó descobre o
     # próprio endereço público para informar à plataforma.
     public_ip: str = _env("PUBLIC_IPADDR", "")
