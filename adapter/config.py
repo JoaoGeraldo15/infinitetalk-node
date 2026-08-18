@@ -110,10 +110,17 @@ class Config:
 
     # Credencial que a plataforma manda no header Authorization.
     #
-    # ⚠️ NÃO use OPEN_BUTTON_TOKEN. Eu tinha assumido que a base-image do Vast
-    # guardava um token gerado ali; o template mostra `OPEN_BUTTON_TOKEN=1` —
-    # é uma FLAG booleana, não um segredo. Usá-la deixaria a API do nó
-    # protegida pelo token "1", numa máquina com IP público.
+    # ⚠️ NÃO use OPEN_BUTTON_TOKEN — mas não pelo motivo que eu escrevi aqui
+    # antes. Eu dizia que o `=1` do template era "flag booleana, não segredo";
+    # é meio verdade: o `=1` PEDE, e o Vast substitui por um token real de 64
+    # hex no lançamento (visto em 2026-08-17 no Caddyfile da máquina).
+    #
+    # O motivo real de manter separado: esse token é a senha do PORTAL — o
+    # mesmo que abre o Jupyter e o terminal web da máquina. Usá-lo na API do
+    # adapter daria à plataforma uma credencial de acesso total ao host.
+    #
+    # E eles convivem: o Caddy aceita o dele na query (`?token=`), o adapter
+    # aceita o seu no header Authorization. Ver gpu_node_client.py na plataforma.
     #
     # Sem ADAPTER_TOKEN no template, sorteamos um por sessão: um nó com token
     # aleatório é inútil até você ler o log, mas um nó com token adivinhável é
@@ -150,13 +157,20 @@ class Config:
     #
     # ratio → (resolução gerada no Wan2GP, recorte final ou None)
     resolucoes: dict = field(default_factory=lambda: {
-        # nativas
-        "9:16": ("480x832", None),
-        "16:9": ("832x480", None),
+        # ⚠️ Os rótulos "16:9" e "9:16" do Wan2GP NÃO são exatos: 832/480 = 1,733
+        # contra 1,778 do 16:9 real, e 480/832 = 0,578 contra 0,5625 do 9:16.
+        # Desvio de ~2,5%. Na prática o YouTube põe barras verticais finas e o
+        # Instagram corta as laterais por conta própria. Recortamos 12 px (6 de
+        # cada lado) para entregar a proporção exata: depois do upscale para
+        # 1080 de altura sai 1920x1080 e 608x1080, redondos.
+        "16:9": ("832x480", "832x468"),  # corta altura
+        "9:16": ("480x832", "468x832"),  # corta largura
+        # exata na origem
         "1:1": ("720x720", None),
         "3:4": ("624x832", None),
         "4:3": ("832x624", None),
-        # derivadas por recorte
+        # proporções que o Wan2GP não tem em 480p: geradas na nativa mais
+        # próxima e recortadas
         "4:5": ("624x832", "624x780"),   # gera 3:4, corta altura
         "2:3": ("624x832", "554x832"),   # gera 3:4, corta largura
         "3:2": ("832x624", "832x554"),   # gera 4:3, corta altura
