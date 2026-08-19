@@ -81,48 +81,46 @@ class PedidoJob(BaseModel):
 # ── ciclo de vida ─────────────────────────────────────────────────────
 
 def _preparar() -> None:
-    """Baixa os pesos e carrega o Wan2GP, reportando o progresso.
+    """Prepara a máquina e carrega o Wan2GP, reportando cada etapa.
 
-    ⚠️ O download dos pesos roda AQUI, não no adapter.sh antes do uvicorn.
-    Antes era o contrário, e a consequência era ruim: durante os ~15 min de
-    download não existia API nem registro, então a máquina só aparecia na
-    plataforma quando já estava pronta — a usuária ficava 25 minutos sem
-    nenhum sinal, sem saber se deu errado.
+    ⚠️ Isto roda AQUI, numa thread, não no adapter.sh antes do uvicorn.
+    Antes era o contrário, e durante os ~15 min de preparação não existia API
+    nem registro: a máquina só aparecia na plataforma quando já estava pronta,
+    e a usuária ficava sem nenhum sinal, sem saber se tinha dado errado.
 
-    Agora a API responde em segundos e reporta `provisioning`, e a plataforma
-    consegue mostrar "baixando modelos" enquanto isso acontece.
+    Agora a API responde em segundos, se registra como `provisioning`, e a
+    plataforma mostra o que está acontecendo — inclusive o tamanho dos pesos
+    crescendo enquanto o Wan2GP os baixa.
     """
     try:
         marca = CONFIG.marca_provisionado
         if not marca.exists():
-            ESTADO["mensagem"] = "baixando os modelos"
-            log.info("provisionando: baixando os modelos")
+            ESTADO["mensagem"] = "preparando a máquina"
+            log.info("preparando a máquina")
             import subprocess
 
-            # Acompanha o tamanho da pasta de pesos enquanto o download roda.
-            # Sem isso a mensagem ficava estática por 15 minutos e a usuária
-            # não sabia distinguir "baixando" de "travado".
-            parar = threading.Event()
-            threading.Thread(
-                target=_acompanhar_download, args=(parar,), daemon=True
-            ).start()
             # Sem capture_output: a saída do provision.sh vai para o log do
             # adapter, que é o que aparece no painel do Vast.
-            try:
-                r = subprocess.run([str(CONFIG.provision_script)], check=False)
-            finally:
-                parar.set()
+            r = subprocess.run([str(CONFIG.provision_script)], check=False)
             if r.returncode == 0:
                 marca.touch()
             else:
-                # Não é fatal: o Wan2GP baixa sob demanda. Mas o primeiro job
-                # vai pagar o download, e a usuária precisa saber disso.
-                ESTADO["mensagem"] = ("modelos não pré-baixados — o primeiro "
-                                      "vídeo vai demorar mais")
+                # Não é fatal: o provision.sh hoje só confere disco e autentica
+                # no Hugging Face. Falhar significa downloads mais lentos ou
+                # disco apertado, não impossibilidade de gerar.
+                ESTADO["mensagem"] = "preparação incompleta — veja o log"
                 log.warning("provisionamento incompleto (código %s)", r.returncode)
 
-        ESTADO["mensagem"] = "carregando o modelo na memória"
-        CLIENTE.carregar()
+        # O Wan2GP baixa os pesos (~19 GB) aqui, na primeira carga. Acompanhar
+        # o tamanho de ckpts é o que diz à usuária que algo está acontecendo —
+        # sem isso a mensagem ficaria estática por 15 minutos.
+        ESTADO["mensagem"] = "carregando o modelo"
+        parar_dl = threading.Event()
+        threading.Thread(target=_acompanhar_download, args=(parar_dl,), daemon=True).start()
+        try:
+            CLIENTE.carregar()
+        finally:
+            parar_dl.set()
         FILA.iniciar()
         ESTADO["status"] = "ready"
         ESTADO["mensagem"] = "pronto para gerar"
@@ -134,23 +132,53 @@ def _preparar() -> None:
 
 
 def _acompanhar_download(parar: threading.Event) -> None:
-    """Atualiza a mensagem com o quanto já baixou, a cada 15 s.
+    """Atualiza a mensagem com o quanto já baixou e a que velocidade.
 
-    `du` percorre só metadados, então é barato mesmo com dezenas de GB. Falha
-    aqui nunca atrapalha o download — no pior caso a mensagem fica parada.
+    ⚠️ Sem porcentagem, de propósito. Havia uma, calculada contra um total
+    "esperado" de 33 GB que eu inferi de uma leitura no MEIO de um download —
+    não do tamanho final. O resultado foi pior que não ter barra nenhuma: com
+    48 GB em disco ela mostrava "99%", afirmando que estava quase acabando
+    enquanto ainda faltava muito.
+    
+    O que o usuário precisa saber é se está progredindo, e a taxa responde
+    isso com honestidade. Se um dia soubermos o tamanho real (basta medir uma
+    máquina até o fim), dá para reintroduzir a porcentagem sem inventar.
+
+    `rglob` percorre só metadados, então é barato mesmo com dezenas de GB.
+    Falha aqui nunca atrapalha o download — no pior caso a mensagem congela.
     """
     ckpts = CONFIG.wan2gp_root / "ckpts"
-    total = CONFIG.peso_esperado_bytes
+    anterior: tuple[float, int] | None = None
+    nonlocal_taxa = [""]  # lista para o closure poder reatribuir
     while not parar.wait(15):
         try:
-            baixado = sum(
-                f.stat().st_size for f in ckpts.rglob("*") if f.is_file()
-            )
+            baixado = sum(f.stat().st_size for f in ckpts.rglob("*") if f.is_file())
         except Exception:  # noqa: BLE001
             continue
-        pct = min(99, int(baixado * 100 / total)) if total else 0
+
+        agora = time.monotonic()
+        if anterior is not None:
+            segundos = agora - anterior[0]
+            delta = baixado - anterior[1]
+            if segundos > 0 and delta > 0:
+                # Guardada em vez de recalculada toda vez: o cliente do HF
+                # alterna entre baixar e verificar arquivos, e uma amostragem
+                # que caia na verificação zeraria a taxa. Manter a última
+                # conhecida evita a mensagem piscar entre "com" e "sem" taxa.
+                nonlocal_taxa[0] = f" · {_tamanho(delta / segundos)}/s"
+        anterior = (agora, baixado)
+
+        # A porcentagem só aparece se houver um total MEDIDO e o download ainda
+        # couber nele. Passar de 105% significa que a estimativa está errada —
+        # e aí calar é mais honesto que fixar em "99%", que foi o que a versão
+        # anterior fazia.
+        pct = ""
+        total = CONFIG.peso_esperado_bytes
+        if total > 0 and baixado <= total * 1.05:
+            pct = f" de {_tamanho(total)} ({int(baixado * 100 / total)}%)"
+
         ESTADO["mensagem"] = (
-            f"baixando os modelos: {_tamanho(baixado)} de ~{_tamanho(total)} ({pct}%)"
+            f"baixando os modelos: {_tamanho(baixado)}{pct}{nonlocal_taxa[0]}"
         )
 
 

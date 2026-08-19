@@ -155,8 +155,6 @@ class Fila:
         opcoes = s.get("settings") or {}
         proporcao = opcoes.get("aspect_ratio", "9:16")
         resolucao = CONFIG.resolucao(proporcao)
-        # None quando a proporção é nativa do Wan2GP; senão, o quadro pedido.
-        recorte = CONFIG.recorte(proporcao)
         prompt = opcoes.get("prompt") or CONFIG.default_prompt
         steps = int(opcoes.get("steps") or CONFIG.steps)
 
@@ -248,10 +246,14 @@ class Fila:
         self._salvar(job)
 
         bruto = concatenar(videos, dir_job / "concat.mp4")
-        if recorte:
-            job.message = f"recortando para {proporcao}"
-            self._salvar(job)
-            bruto = recortar(bruto, recorte, dir_job / "crop.mp4")
+        # Sempre tenta o recorte: a função mede o vídeo e devolve None se ele
+        # já estiver na proporção certa. Confiar na tabela de configuração foi
+        # o que quebrou em 2026-08-19 — o Wan2GP não gera sempre o que pedimos.
+        job.message = f"ajustando para {proporcao}"
+        self._salvar(job)
+        cortado = recortar(bruto, proporcao, dir_job / "crop.mp4")
+        if cortado is not None:
+            bruto = cortado
         master = anexar_audio(bruto, audio_wav, dir_job / "master.mp4")
 
         largura, altura = self._dimensoes(master)

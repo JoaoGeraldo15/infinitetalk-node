@@ -14,6 +14,7 @@ lip-sync.
 from __future__ import annotations
 
 import logging
+import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -159,19 +160,58 @@ def cortar_inicio(video: Path, segundos: float, destino: Path) -> Path:
     return destino
 
 
-def recortar(video: Path, alvo: str, destino: Path) -> Path:
-    """Recorta o quadro para uma proporção que o Wan2GP não gera nativamente.
+def dimensoes(video: Path) -> tuple[int, int]:
+    """Largura e altura reais do vídeo, pelo ffprobe."""
+    saida = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=width,height", "-of", "csv=s=x:p=0", str(video)],
+        capture_output=True, text=True, check=False).stdout.strip()
+    m = re.match(r"(\d+)x(\d+)", saida)
+    if not m:
+        raise RuntimeError(f"não consegui ler as dimensões de {video}: {saida!r}")
+    return int(m.group(1)), int(m.group(2))
 
-    O 480p do Wan2GP só tem 4:3, 3:4, 1:1, 16:9 e 9:16 (ver
-    `shared/resolutions.py` dele). Para 2:3, 3:2 e 4:5 geramos na proporção
-    nativa mais próxima e cortamos aqui — sempre **para dentro** do quadro
-    gerado, nunca ampliando, e centralizado para não decapitar o avatar.
 
-    `alvo` vem de `CONFIG.recorte()` no formato "LARGURAxALTURA".
+def recortar(video: Path, proporcao: str, destino: Path) -> Path | None:
+    """Recorta para a proporção exata pedida, centralizado.
+
+    ⚠️ As dimensões saem do vídeo REAL, medido com ffprobe — não de uma tabela.
+    A versão anterior usava um "LARGURAxALTURA" fixo da configuração,
+    assumindo que o Wan2GP gerou exatamente a resolução pedida. Ele nem sempre
+    gera: em 2026-08-19 pedimos 16:9 (832x480), veio retrato, e o ffmpeg
+    abortou com "Invalid too big or non positive size for width '832'",
+    perdendo a geração inteira no último passo.
+
+    Recorta sempre **para dentro** do quadro, nunca amplia, e devolve None
+    quando o vídeo já está na proporção certa (nada a fazer).
     """
-    largura, altura = (int(v) for v in alvo.split("x"))
+    try:
+        pw, ph = (int(v) for v in proporcao.split(":"))
+    except ValueError:
+        log.warning("proporção ilegível: %r — sem recorte", proporcao)
+        return None
+    if pw <= 0 or ph <= 0:
+        return None
+
+    largura, altura = dimensoes(video)
+
+    # O maior retângulo com a proporção pedida que cabe no quadro atual.
+    if largura * ph > altura * pw:      # quadro largo demais → corta os lados
+        nova_l, nova_a = altura * pw // ph, altura
+    else:                                # alto demais → corta topo e base
+        nova_l, nova_a = largura, largura * ph // pw
+
+    # H.264 exige dimensões pares.
+    nova_l -= nova_l % 2
+    nova_a -= nova_a % 2
+
+    # Diferença de 1–2 px é arredondamento, não vale um reencode.
+    if abs(nova_l - largura) <= 2 and abs(nova_a - altura) <= 2:
+        return None
+
+    log.info("recortando %dx%d → %dx%d (%s)", largura, altura, nova_l, nova_a, proporcao)
     _run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(video),
-          "-vf", f"crop={largura}:{altura}:(iw-{largura})/2:(ih-{altura})/2",
+          "-vf", f"crop={nova_l}:{nova_a}:(iw-{nova_l})/2:(ih-{nova_a})/2",
           "-c:v", "libx264", "-crf", "18", "-preset", "medium",
           "-c:a", "copy", str(destino)])
     return destino

@@ -26,7 +26,7 @@ tempo real (com carga), seguintes a **25,5x**. Um subprocesso por job pagaria
 | `adapter/wan2gp_client.py` | **única** fronteira com o Wan2GP |
 | `adapter/config.py` | tudo configurável por variável de ambiente |
 | `bootstrap.sh` | **ponto de entrada** — o Vast baixa e executa no boot |
-| `provision.sh` | baixa os pesos dos modelos |
+| `provision.sh` | confere disco e autentica no Hugging Face |
 | `supervisor/` | mantém o adapter de pé e joga o log no painel do Vast |
 | `Dockerfile` | caminho alternativo, para congelar tudo numa imagem depois |
 
@@ -43,8 +43,9 @@ Template ──► vastai/wan2gp:<tag>  +  PROVISIONING_SCRIPT=.../bootstrap.sh
                                           ├─ pip install (4 pacotes)
                                           └─ registra o adapter no supervisor
                                                   │
-                                                  ├─ provision.sh (pesos, ~20 GB)
                                                   └─ uvicorn na 18000
+                                                       ├─ provision.sh (disco + HF)
+                                                       └─ Wan2GP baixa ~19 GB
 ```
 
 Por que não uma imagem própria:
@@ -98,7 +99,7 @@ Criado uma vez, reusado todo sábado.
 |---|---|
 | Image | `vastai/wan2gp:7e45fe7-2026-08-10-cuda-12.9` ⚠️ tag fixa, nunca `latest` |
 | **Launch Mode** | **Entrypoint** ⚠️ nunca Jupyter — ele substitui o entrypoint e o adapter não sobe |
-| Disk | **200 GB** (estático, não muda depois) |
+| Disk | **100 GB** (estático, não muda depois) |
 | **Private template** | ✅ é aqui que os tokens moram |
 
 **Environment variables** (é este campo, não o "Extra docker run args"):
@@ -166,10 +167,13 @@ O nó envia URL pública, o token do adapter e o **token do proxy**
 (`OPEN_BUTTON_TOKEN`, gerado pelo Vast por instância — sem ele a plataforma
 receberia um endereço que não consegue usar).
 
-Se a plataforma não responder, tenta 6 vezes com espera crescente: a máquina
-passa ~25 min baixando modelos antes de chegar nesse ponto, e nesse intervalo a
-plataforma pode ter reiniciado. Depois de registrado, reanuncia a cada 5 min —
-o registro é idempotente, então reanunciar **é** o sinal de vida.
+O registro acontece **assim que a API sobe**, poucos segundos após o boot, e
+não depois de tudo pronto — é o que permite à plataforma mostrar "preparando" e
+"baixando os modelos: 8,2 GB" durante os ~20 min de espera.
+
+Se a plataforma não responder, tenta 6 vezes com espera crescente. Depois
+reanuncia a cada 20 s enquanto provisiona e a cada 5 min quando pronto — o
+registro é idempotente, então reanunciar **é** o sinal de vida.
 
 Sem `BACKEND_URL` nada disso acontece: o log imprime o endereço do nó e você o
 cadastra à mão.

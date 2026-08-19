@@ -102,10 +102,17 @@ class Config:
         _env("PROVISION_SCRIPT", f"{_env('ADAPTER_ROOT', '/opt/node')}/provision.sh")
     )
     marca_provisionado: Path = Path(_env("PROVISION_MARKER", "/workspace/.provisionado"))
-    # Tamanho aproximado dos pesos, só para a barra de progresso fazer sentido.
-    # Medido em 2026-08-19: InfiniteTalk + LoRA + wav2vec2 ≈ 33 GB. Se trocar
-    # de modelo, ajuste — errar aqui só deixa a porcentagem torta, não quebra.
-    peso_esperado_bytes: int = _int("EXPECTED_WEIGHTS_BYTES", 33 * 1024**3)
+    # Tamanho total dos pesos, para calcular a porcentagem do download.
+    #
+    # ⚠️ **Só preencha com um valor MEDIDO** — `du -sb /workspace/Wan2GP/ckpts`
+    # numa máquina que terminou de baixar. Zero significa "não sei", e o nó
+    # reporta só o tamanho absoluto e a taxa.
+    #
+    # Aqui já houve um chute de 33 GB, tirado de um `du` no MEIO de um
+    # download. Com 48 GB em disco a barra mostrava "99%", afirmando que estava
+    # acabando enquanto faltava muito. Uma barra que mente é pior que nenhuma —
+    # daí o padrão ser 0 e a checagem de sanidade no `_acompanhar_download`.
+    peso_esperado_bytes: int = _int("EXPECTED_WEIGHTS_BYTES", 0)
 
     work_dir: Path = Path(_env("WORK_DIR", "/workspace/adapter-work"))
     jobs_dir: Path = Path(_env("JOBS_DIR", "/workspace/adapter-jobs"))
