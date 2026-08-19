@@ -29,12 +29,45 @@ if [ -n "$livre" ] && [ "$livre" -lt "$MIN_FREE_GB" ]; then
 fi
 log "disco: ${livre} GB livres"
 
+# ── achar o CLI do Hugging Face ───────────────────────────────────────
+# ⚠️ Ele mora no VENV da imagem (/venv/main/bin/hf), e este script roda pelo
+# supervisor, sem o venv ativado. Sem isto, todo download falhava com
+# "hf: command not found" — e como o `hf auth login` falhava pelo mesmo
+# motivo, a mensagem que aparecia era "HF_TOKEN inválido", apontando para o
+# lugar errado. Medido em 2026-08-19.
+#
+# O bootstrap grava em .python o interpretador que tem o torch; o `hf` está
+# no mesmo diretório.
+PY_DO_VENV=$(cat "${ADAPTER_ROOT:-/opt/node}/.python" 2>/dev/null || true)
+if [ -n "$PY_DO_VENV" ] && [ -x "$PY_DO_VENV" ]; then
+  export PATH="$(dirname "$PY_DO_VENV"):$PATH"
+fi
+
+# `hf` é o comando atual; `huggingface-cli` é o nome antigo, ainda presente em
+# imagens mais velhas. Testamos os dois antes de desistir.
+HF=""
+for candidato in hf huggingface-cli; do
+  if command -v "$candidato" >/dev/null 2>&1; then HF="$candidato"; break; fi
+done
+
+if [ -z "$HF" ]; then
+  warn "CLI do Hugging Face não encontrado (nem 'hf' nem 'huggingface-cli')."
+  warn "PATH=$PATH"
+  warn "Os pesos NÃO serão pré-baixados; o primeiro job vai baixá-los e levar"
+  warn "uns 20 minutos a mais."
+  exit 1
+fi
+log "CLI do Hugging Face: $(command -v "$HF")"
+
 # ── autenticação no Hugging Face ──────────────────────────────────────
 # Sem token, o HF limita a taxa: na Fase 0b o download caiu para ~2 MB/s num
 # link de 215 Mbps. Com token, usa a banda disponível.
 if [ -n "${HF_TOKEN:-}" ]; then
-  hf auth login --token "$HF_TOKEN" >/dev/null 2>&1 && log "autenticado no Hugging Face" \
-    || warn "HF_TOKEN inválido — o download vai ficar lento"
+  if "$HF" auth login --token "$HF_TOKEN" >/dev/null 2>&1; then
+    log "autenticado no Hugging Face"
+  else
+    warn "HF_TOKEN recusado pelo Hugging Face — o download vai ficar lento"
+  fi
 else
   warn "HF_TOKEN ausente: downloads não autenticados são limitados pelo HF"
 fi
@@ -51,7 +84,7 @@ baixar() {
   [ -n "${HF_REVISION:-}" ] && rev=(--revision "$HF_REVISION")
   log "baixando $repo"
   local t0; t0=$(date +%s)
-  if hf download "$repo" --local-dir "$destino" "${rev[@]}" "$@"; then
+  if "$HF" download "$repo" --local-dir "$destino" "${rev[@]}" "$@"; then
     log "  ok em $(( $(date +%s) - t0 ))s"
   else
     warn "  FALHOU: $repo"

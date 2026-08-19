@@ -144,6 +144,18 @@ def _registrar_na_plataforma() -> None:
         log.error("PUBLIC_IPADDR/VAST_TCP_PORT_8000 ausentes: o nó não sabe o "
                   "próprio endereço e não tem como se registrar.")
         return
+    # Falhas de configuração não melhoram com repetição. Sem esta checagem, um
+    # BACKEND_TOKEN vazio produzia seis tentativas e o erro obscuro
+    # "Illegal header value b'Bearer '" — que é o httpx recusando montar o
+    # cabeçalho, não a plataforma recusando o segredo.
+    if not CONFIG.backend_token:
+        log.error(
+            "BACKEND_TOKEN vazio, mas BACKEND_URL está definido. O nó não tem "
+            "como se autenticar para se registrar.\n"
+            "  Corrija no template do Vast: BACKEND_TOKEN deve ter o mesmo "
+            "valor do GPU_NODE_REGISTER_TOKEN da plataforma.\n"
+            "  Enquanto isso, cadastre à mão: %s", CONFIG.public_url)
+        return
 
     espera = 5
     for tentativa in range(1, 7):
