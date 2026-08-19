@@ -37,6 +37,13 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s · %(message)s",
 )
+# Uma linha INFO por reanúncio — a cada 20 s durante a preparação inteira —
+# enche o log de "POST .../register 200 OK" e afoga tudo que importa. Quem
+# opera a máquina precisa ver o download, não a confirmação de que o
+# heartbeat bateu. Falhas continuam aparecendo: quem as registra é o nosso
+# próprio log.warning em _registrar_uma_vez.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 log = logging.getLogger("adapter")
 
 # O que a plataforma mostra para a usuária. `mensagem` é texto para humano;
@@ -150,6 +157,7 @@ def _acompanhar_download(parar: threading.Event) -> None:
     """
     ckpts = CONFIG.wan2gp_root / "ckpts"
     inicio = time.monotonic()
+    voltas = [0]
     anterior: tuple[float, int] | None = None
     nonlocal_taxa = [""]  # lista para o closure poder reatribuir
     while not parar.wait(15):
@@ -187,6 +195,14 @@ def _acompanhar_download(parar: threading.Event) -> None:
             f"baixando os modelos: {_tamanho(baixado)}{pct}"
             f"{nonlocal_taxa[0]} · {_decorrido(time.monotonic() - inicio)}"
         )
+        # Também no log, e não só no payload que vai para a plataforma: quem
+        # está no terminal da máquina é justamente quem precisa saber se
+        # travou. Sem isto o `tail -f` só mostrava os POSTs de registro, e o
+        # progresso era invisível de dentro da própria máquina.
+        # A cada ~1 min (4 voltas de 15 s) para não virar barulho.
+        voltas[0] += 1
+        if voltas[0] % 4 == 1:
+            log.info("%s", ESTADO["mensagem"])
         # Número, além do texto: o frontend desenha barra sem precisar extrair
         # porcentagem de uma frase — que quebraria a cada mudança de redação.
         ESTADO["progresso"] = min(1.0, baixado / total) if total > 0 else None
