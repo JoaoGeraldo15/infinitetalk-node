@@ -102,17 +102,24 @@ class Config:
         _env("PROVISION_SCRIPT", f"{_env('ADAPTER_ROOT', '/opt/node')}/provision.sh")
     )
     marca_provisionado: Path = Path(_env("PROVISION_MARKER", "/workspace/.provisionado"))
-    # Tamanho total dos pesos, para calcular a porcentagem do download.
+    # Tamanho total dos pesos, para a porcentagem do download.
     #
-    # ⚠️ **Só preencha com um valor MEDIDO** — `du -sb /workspace/Wan2GP/ckpts`
-    # numa máquina que terminou de baixar. Zero significa "não sei", e o nó
-    # reporta só o tamanho absoluto e a taxa.
+    # ✅ **MEDIDO** em 2026-08-19, `du -sb` numa máquina que terminou de baixar:
+    # 28.866.124.557 bytes (28 GB). Decomposição:
     #
-    # Aqui já houve um chute de 33 GB, tirado de um `du` no MEIO de um
-    # download. Com 48 GB em disco a barra mostrava "99%", afirmando que estava
-    # acabando enquanto faltava muito. Uma barra que mente é pior que nenhuma —
-    # daí o padrão ser 0 e a checagem de sanidade no `_acompanhar_download`.
-    peso_esperado_bytes: int = _int("EXPECTED_WEIGHTS_BYTES", 0)
+    #     16,0 GB  wan2.1_image2video_480p_14B_quanto_mbf16_int8
+    #      2,4 GB  wan2.1_infinitetalk_single_14B_quanto_mbf16_int8
+    #      2,3 GB  xlm-roberta-large        2,1 GB  umt5-xxl
+    #      1,4 GB  mask                     1,3 GB  depth
+    #      0,6 GB  roformer                 1,0 GB  VAE (dois arquivos)
+    #      0,7 GB  wav2vec2 (dois)          0,3 GB  pose
+    #
+    # ⚠️ Só troque este valor por outro MEDIDO. Aqui já houve um chute de
+    # 33 GB, tirado de um `du` no MEIO de um download: com 48 GB em disco a
+    # barra mostrava "99%", afirmando que ia acabar enquanto faltava muito.
+    # Se o valor ficar baixo demais, `_acompanhar_download` esconde a
+    # porcentagem em vez de fixá-la em 99% — mas o certo é medir.
+    peso_esperado_bytes: int = _int("EXPECTED_WEIGHTS_BYTES", 28_866_124_557)
 
     work_dir: Path = Path(_env("WORK_DIR", "/workspace/adapter-work"))
     jobs_dir: Path = Path(_env("JOBS_DIR", "/workspace/adapter-jobs"))

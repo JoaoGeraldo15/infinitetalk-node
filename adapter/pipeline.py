@@ -23,6 +23,18 @@ from config import CONFIG
 
 log = logging.getLogger("adapter.pipeline")
 
+# Quanto o recorte pode descartar antes de ser destrutivo. Os limites são
+# ASSIMÉTRICOS de propósito: o risco não é o mesmo nas duas direções.
+#
+#   · cortar ALTURA tira a cabeça do avatar — é o que produziu, em
+#     2026-08-19, um vídeo mostrando do peito para baixo;
+#   · cortar LARGURA tira as laterais do cenário, e o rosto continua lá.
+#
+# Um limite único reprovava o caso legítimo de foto 2:3 para vídeo 9:16, que
+# corta 16% da largura e não machuca nada.
+PERDA_MAXIMA_ALTURA = 0.20
+PERDA_MAXIMA_LARGURA = 0.40
+
 
 def _run(cmd: list[str]) -> None:
     r = subprocess.run(cmd, capture_output=True, text=True, check=False)
@@ -207,6 +219,30 @@ def recortar(video: Path, proporcao: str, destino: Path) -> Path | None:
 
     # Diferença de 1–2 px é arredondamento, não vale um reencode.
     if abs(nova_l - largura) <= 2 and abs(nova_a - altura) <= 2:
+        return None
+
+    # ⚠️ LIMITE DE SEGURANÇA. Recortar 2% para acertar a proporção é ajuste;
+    # recortar 60% é destruir o enquadramento.
+    #
+    # Medido em 2026-08-19: pedimos 16:9, o Wan2GP gerou 512x768 (retrato,
+    # seguindo a proporção da FOTO DE REFERÊNCIA em vez da resolução pedida),
+    # e o recorte centralizado virou 512x288 — uma faixa do meio do corpo, com
+    # a cabeça do avatar cortada fora. O vídeo saiu inutilizável depois de
+    # 33 minutos de GPU.
+    #
+    # Entregar com a proporção um pouco errada é ruim; entregar decapitado é
+    # pior. Acima do limite, devolvemos o vídeo como veio e registramos por quê
+    # — a correção de verdade é usar uma foto de avatar na proporção do vídeo.
+    perda_l = 1 - nova_l / largura
+    perda_a = 1 - nova_a / altura
+    if perda_a > PERDA_MAXIMA_ALTURA or perda_l > PERDA_MAXIMA_LARGURA:
+        log.warning(
+            "recorte para %s descartaria %.0f%% da altura e %.0f%% da largura "
+            "(%dx%d → %dx%d): ENTREGANDO SEM RECORTAR. O vídeo saiu em outra "
+            "proporção porque o Wan2GP segue a proporção da IMAGEM DE "
+            "REFERÊNCIA, não a resolução pedida — use uma foto de avatar no "
+            "mesmo formato do vídeo.",
+            proporcao, perda_a * 100, perda_l * 100, largura, altura, nova_l, nova_a)
         return None
 
     log.info("recortando %dx%d → %dx%d (%s)", largura, altura, nova_l, nova_a, proporcao)
