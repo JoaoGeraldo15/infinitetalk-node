@@ -184,6 +184,64 @@ def dimensoes(video: Path) -> tuple[int, int]:
     return int(m.group(1)), int(m.group(2))
 
 
+# Onde ancorar o recorte vertical da foto do avatar. 0 = topo, 0,5 = centro.
+#
+# Rosto fica na parte de cima do enquadramento, então centralizar é o pior
+# lugar possível: numa foto 2:3 virando 16:9, o corte centralizado pega do
+# peito para baixo. 0,15 tira um pouco de ar acima da cabeça e todo o excesso
+# de baixo — que é o que um editor humano faria.
+ANCORA_VERTICAL = 0.15
+
+
+def enquadrar_imagem(imagem: Path, proporcao: str, destino: Path) -> Path | None:
+    """Recorta a foto do avatar para a proporção do vídeo pedido.
+
+    ⚠️ Isto existe porque o Wan2GP **ignora a resolução que pedimos** e segue a
+    proporção da imagem de referência. Confirmado no fonte dele
+    (`shared/utils/utils.py`, `calculate_new_dimensions`): com o padrão
+    `fit_canvas = 0`, ele preserva a proporção da imagem e só ajusta a escala
+    para bater com o orçamento de pixels.
+
+    Medido em 2026-08-19: foto 1024x1536 e pedido de 832x480 produziram
+    512x768 — retrato. Recortar o vídeo depois seria pior: tirar uma faixa
+    16:9 do meio de um retrato mostra do peito para baixo.
+
+    Recortando a FOTO antes, o Wan2GP já gera na proporção certa e ninguém
+    precisa mutilar o vídeo depois.
+
+    Devolve None quando a foto já está na proporção pedida.
+    """
+    try:
+        pw, ph = (int(v) for v in proporcao.split(":"))
+    except ValueError:
+        log.warning("proporção ilegível: %r — foto sem recorte", proporcao)
+        return None
+    if pw <= 0 or ph <= 0:
+        return None
+
+    largura, altura = dimensoes(imagem)
+
+    if largura * ph > altura * pw:      # foto larga demais → corta os lados
+        nova_l, nova_a = round(altura * pw / ph), altura
+    else:                                # alta demais → corta topo e base
+        nova_l, nova_a = largura, round(largura * ph / pw)
+
+    nova_l, nova_a = min(nova_l, largura), min(nova_a, altura)
+    if abs(nova_l - largura) <= 2 and abs(nova_a - altura) <= 2:
+        return None
+
+    # Horizontal centralizado (rostos ficam no meio); vertical ancorado no
+    # topo (rostos ficam em cima).
+    x = (largura - nova_l) // 2
+    y = round((altura - nova_a) * ANCORA_VERTICAL)
+
+    log.info("enquadrando a foto %dx%d → %dx%d em %s (corte y=%d)",
+             largura, altura, nova_l, nova_a, proporcao, y)
+    _run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(imagem),
+          "-vf", f"crop={nova_l}:{nova_a}:{x}:{y}", str(destino)])
+    return destino
+
+
 def recortar(video: Path, proporcao: str, destino: Path) -> Path | None:
     """Recorta para a proporção exata pedida, centralizado.
 

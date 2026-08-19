@@ -24,7 +24,7 @@ import httpx
 
 from config import CONFIG
 from pipeline import (anexar_audio, concatenar, cortar_inicio, duracao,
-                      fatiar_audio, recortar)
+                      enquadrar_imagem, fatiar_audio, recortar)
 from wan2gp_client import CLIENTE
 
 log = logging.getLogger("adapter.jobs")
@@ -157,6 +157,13 @@ class Fila:
         resolucao = CONFIG.resolucao(proporcao)
         prompt = opcoes.get("prompt") or CONFIG.default_prompt
         steps = int(opcoes.get("steps") or CONFIG.steps)
+
+        # A foto define a proporção do vídeo — o Wan2GP ignora a resolução que
+        # mandamos e segue a imagem de referência. Enquadrar aqui é o que faz o
+        # vídeo sair no formato pedido, em vez de mutilá-lo depois.
+        enquadrada = enquadrar_imagem(imagem, proporcao, dir_job / "avatar-enquadrado.png")
+        if enquadrada is not None:
+            imagem = enquadrada
 
         pedacos = fatiar_audio(audio_wav, dir_job / "chunks")
 
