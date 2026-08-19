@@ -95,12 +95,23 @@ def _preparar() -> None:
     try:
         marca = CONFIG.marca_provisionado
         if not marca.exists():
-            ESTADO["mensagem"] = "baixando os modelos (~33 GB)"
+            ESTADO["mensagem"] = "baixando os modelos"
             log.info("provisionando: baixando os modelos")
             import subprocess
+
+            # Acompanha o tamanho da pasta de pesos enquanto o download roda.
+            # Sem isso a mensagem ficava estática por 15 minutos e a usuária
+            # não sabia distinguir "baixando" de "travado".
+            parar = threading.Event()
+            threading.Thread(
+                target=_acompanhar_download, args=(parar,), daemon=True
+            ).start()
             # Sem capture_output: a saída do provision.sh vai para o log do
             # adapter, que é o que aparece no painel do Vast.
-            r = subprocess.run([str(CONFIG.provision_script)], check=False)
+            try:
+                r = subprocess.run([str(CONFIG.provision_script)], check=False)
+            finally:
+                parar.set()
             if r.returncode == 0:
                 marca.touch()
             else:
@@ -120,6 +131,35 @@ def _preparar() -> None:
         ESTADO["status"] = "failed"
         ESTADO["mensagem"] = f"falhou: {exc}"[:200]
         log.exception("falha ao preparar o nó")
+
+
+def _acompanhar_download(parar: threading.Event) -> None:
+    """Atualiza a mensagem com o quanto já baixou, a cada 15 s.
+
+    `du` percorre só metadados, então é barato mesmo com dezenas de GB. Falha
+    aqui nunca atrapalha o download — no pior caso a mensagem fica parada.
+    """
+    ckpts = CONFIG.wan2gp_root / "ckpts"
+    total = CONFIG.peso_esperado_bytes
+    while not parar.wait(15):
+        try:
+            baixado = sum(
+                f.stat().st_size for f in ckpts.rglob("*") if f.is_file()
+            )
+        except Exception:  # noqa: BLE001
+            continue
+        pct = min(99, int(baixado * 100 / total)) if total else 0
+        ESTADO["mensagem"] = (
+            f"baixando os modelos: {_tamanho(baixado)} de ~{_tamanho(total)} ({pct}%)"
+        )
+
+
+def _tamanho(n: float) -> str:
+    """Bytes em unidade legível. Existe para a mensagem nunca dizer '0.0 GB'."""
+    for unidade, limite in (("GB", 1024**3), ("MB", 1024**2), ("KB", 1024)):
+        if n >= limite:
+            return f"{n / limite:.1f} {unidade}"
+    return f"{int(n)} B"
 
 
 def _registrar_uma_vez() -> bool:
