@@ -96,6 +96,13 @@ class Config:
     chunk_overlap_frames: int = _int("CHUNK_OVERLAP_FRAMES", 0)
 
     # ── Diretórios ────────────────────────────────────────────────────
+    # Script que baixa os pesos. Rodado pelo adapter em segundo plano, não
+    # pelo adapter.sh antes do uvicorn — ver _preparar() em main.py.
+    provision_script: Path = Path(
+        _env("PROVISION_SCRIPT", f"{_env('ADAPTER_ROOT', '/opt/node')}/provision.sh")
+    )
+    marca_provisionado: Path = Path(_env("PROVISION_MARKER", "/workspace/.provisionado"))
+
     work_dir: Path = Path(_env("WORK_DIR", "/workspace/adapter-work"))
     jobs_dir: Path = Path(_env("JOBS_DIR", "/workspace/adapter-jobs"))
 

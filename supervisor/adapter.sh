@@ -10,12 +10,13 @@ RAIZ="${ADAPTER_ROOT:-/opt/node}"
 # residente na VRAM entre os vídeos.
 PY=$(cat "$RAIZ/.python" 2>/dev/null || command -v python3)
 
-# O download dos pesos roda uma vez; o marcador evita repetir a cada restart do
-# supervisor. Apague /workspace/.provisionado para forçar de novo.
-MARCA=/workspace/.provisionado
-if [ ! -f "$MARCA" ]; then
-  "$RAIZ/provision.sh" && touch "$MARCA"
-fi
+# ⚠️ O download dos pesos NÃO acontece mais aqui.
+#
+# Rodá-lo antes do uvicorn significava ~15 minutos sem API e sem registro: a
+# máquina só aparecia na plataforma depois de pronta, e a usuária ficava sem
+# nenhum sinal. Agora quem chama o provision.sh é o próprio adapter, numa
+# thread, reportando "baixando os modelos" enquanto isso — ver _preparar()
+# em main.py. O marcador /workspace/.provisionado continua evitando repetir.
 
 # ⚠️ O diretório de trabalho precisa ser a RAIZ DO WAN2GP, não a do adapter.
 #
