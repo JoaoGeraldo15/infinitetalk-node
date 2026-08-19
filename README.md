@@ -44,8 +44,10 @@ Template ──► vastai/wan2gp:<tag>  +  PROVISIONING_SCRIPT=.../bootstrap.sh
                                           └─ registra o adapter no supervisor
                                                   │
                                                   └─ uvicorn na 18000
-                                                       ├─ provision.sh (disco + HF)
-                                                       └─ Wan2GP baixa ~19 GB
+                                                       ├─ provision.sh
+                                                       │    ├─ disco + login no HF
+                                                       │    └─ pré-baixa ~19 GB de pesos
+                                                       └─ Wan2GP carrega o modelo
 ```
 
 Por que não uma imagem própria:

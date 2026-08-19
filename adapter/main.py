@@ -44,7 +44,7 @@ log = logging.getLogger("adapter")
 #   provisioning → baixando modelos ou carregando o Wan2GP
 #   ready        → aceita jobs
 #   failed       → algo quebrou; o log tem o motivo
-ESTADO = {"status": "provisioning", "mensagem": "iniciando"}
+ESTADO = {"status": "provisioning", "mensagem": "iniciando", "progresso": None}
 
 
 # ── autenticação ──────────────────────────────────────────────────────
@@ -92,6 +92,12 @@ def _preparar() -> None:
     plataforma mostra o que está acontecendo — inclusive o tamanho dos pesos
     crescendo enquanto o Wan2GP os baixa.
     """
+    # O rastreador cobre as DUAS fases (provision.sh e carga do modelo) porque
+    # é no provision que os ~19 GB agora descem. Antes ele só ligava depois, e
+    # durante o download mais longo a tela ficava num "preparando a máquina"
+    # imóvel — o momento exato em que a usuária mais precisa ver que anda.
+    parar_dl = threading.Event()
+    threading.Thread(target=_acompanhar_download, args=(parar_dl,), daemon=True).start()
     try:
         marca = CONFIG.marca_provisionado
         if not marca.exists():
@@ -105,49 +111,45 @@ def _preparar() -> None:
             if r.returncode == 0:
                 marca.touch()
             else:
-                # Não é fatal: o provision.sh hoje só confere disco e autentica
-                # no Hugging Face. Falhar significa downloads mais lentos ou
-                # disco apertado, não impossibilidade de gerar.
+                # Não é fatal: o provision.sh confere disco, autentica no
+                # Hugging Face e PRÉ-BAIXA os pesos. Falhar em qualquer uma
+                # dessas etapas atrasa, mas não impede — o Wan2GP baixa o que
+                # faltar sozinho na primeira geração. Por isso a marca não é
+                # criada: o próximo boot tenta de novo e completa o que ficou.
                 ESTADO["mensagem"] = "preparação incompleta — veja o log"
                 log.warning("provisionamento incompleto (código %s)", r.returncode)
 
-        # O Wan2GP baixa os pesos (~19 GB) aqui, na primeira carga. Acompanhar
-        # o tamanho de ckpts é o que diz à usuária que algo está acontecendo —
-        # sem isso a mensagem ficaria estática por 15 minutos.
-        ESTADO["mensagem"] = "carregando o modelo"
-        parar_dl = threading.Event()
-        threading.Thread(target=_acompanhar_download, args=(parar_dl,), daemon=True).start()
-        try:
-            CLIENTE.carregar()
-        finally:
-            parar_dl.set()
+        # O provision.sh já trouxe os pesos grandes; o que sobra aqui é o
+        # restante que o Wan2GP busca sozinho (VAE, text encoder) e a carga na
+        # VRAM. O rastreador segue ligado até o fim para não deixar buraco.
+        CLIENTE.carregar()
+        parar_dl.set()
         FILA.iniciar()
         ESTADO["status"] = "ready"
         ESTADO["mensagem"] = "pronto para gerar"
+        ESTADO["progresso"] = None
         log.info("nó PRONTO")
     except Exception as exc:  # noqa: BLE001
+        parar_dl.set()
         ESTADO["status"] = "failed"
         ESTADO["mensagem"] = f"falhou: {exc}"[:200]
         log.exception("falha ao preparar o nó")
 
 
 def _acompanhar_download(parar: threading.Event) -> None:
-    """Atualiza a mensagem com o quanto já baixou e a que velocidade.
+    """Atualiza a mensagem com o quanto já baixou, a que taxa e há quanto tempo.
 
-    ⚠️ Sem porcentagem, de propósito. Havia uma, calculada contra um total
-    "esperado" de 33 GB que eu inferi de uma leitura no MEIO de um download —
-    não do tamanho final. O resultado foi pior que não ter barra nenhuma: com
-    48 GB em disco ela mostrava "99%", afirmando que estava quase acabando
-    enquanto ainda faltava muito.
-    
-    O que o usuário precisa saber é se está progredindo, e a taxa responde
-    isso com honestidade. Se um dia soubermos o tamanho real (basta medir uma
-    máquina até o fim), dá para reintroduzir a porcentagem sem inventar.
+    ⚠️ A porcentagem é contra um total MEDIDO (`EXPECTED_WEIGHTS_BYTES`), lido
+    de uma máquina depois de uma geração completa. A primeira versão usava um
+    número inferido de uma leitura no MEIO de um download, e ficou pior que não
+    ter barra: com 48 GB em disco ela dizia "99%". Se este arquivo mudar de
+    modelo, a constante tem que ser remedida — não estimada.
 
     `rglob` percorre só metadados, então é barato mesmo com dezenas de GB.
     Falha aqui nunca atrapalha o download — no pior caso a mensagem congela.
     """
     ckpts = CONFIG.wan2gp_root / "ckpts"
+    inicio = time.monotonic()
     anterior: tuple[float, int] | None = None
     nonlocal_taxa = [""]  # lista para o closure poder reatribuir
     while not parar.wait(15):
@@ -177,9 +179,23 @@ def _acompanhar_download(parar: threading.Event) -> None:
         if total > 0 and baixado <= total * 1.05:
             pct = f" de {_tamanho(total)} ({int(baixado * 100 / total)}%)"
 
+        # O tempo decorrido entra porque os GB sozinhos não respondem a
+        # pergunta que a usuária de fato faz — "falta muito?". Com 8 min já
+        # rodados e a taxa à vista, ela consegue estimar; só com "12,4 GB",
+        # não.
         ESTADO["mensagem"] = (
-            f"baixando os modelos: {_tamanho(baixado)}{pct}{nonlocal_taxa[0]}"
+            f"baixando os modelos: {_tamanho(baixado)}{pct}"
+            f"{nonlocal_taxa[0]} · {_decorrido(time.monotonic() - inicio)}"
         )
+        # Número, além do texto: o frontend desenha barra sem precisar extrair
+        # porcentagem de uma frase — que quebraria a cada mudança de redação.
+        ESTADO["progresso"] = min(1.0, baixado / total) if total > 0 else None
+
+
+def _decorrido(segundos: float) -> str:
+    """Tempo desde o início da preparação, em minutos cheios."""
+    minutos = int(segundos // 60)
+    return f"{minutos} min" if minutos else "menos de 1 min"
 
 
 def _tamanho(n: float) -> str:
@@ -204,6 +220,7 @@ def _registrar_uma_vez() -> bool:
         # É isto que a plataforma mostra: "baixando modelos", "pronto"...
         "status": ESTADO["status"],
         "message": ESTADO["mensagem"],
+        "progress": ESTADO["progresso"],
     }
     try:
         r = httpx.post(
@@ -271,14 +288,20 @@ def _registrar_na_plataforma() -> None:
         log.error("não foi possível registrar após 6 tentativas. O nó funciona, "
                   "mas precisa ser cadastrado à mão: %s", CONFIG.public_url)
 
+    # Anuncia por mudança de estado, não só por relógio. Sem isto, a transição
+    # para "pronto" podia levar até 20 s para chegar à tela — e a usuária,
+    # vendo "baixando" numa máquina já pronta, recarregava a página achando
+    # que tinha travado.
+    ultimo_status = ESTADO["status"]
+    ultimo_anuncio = time.monotonic()
     while True:
-        # Enquanto provisiona, reanuncia rápido: é o que faz a tela da usuária
-        # sair de "baixando modelos" para "pronto" sem ela precisar recarregar.
-        # Depois de pronto, o intervalo longo basta — só serve para dizer que a
-        # máquina continua viva.
-        pronto = ESTADO["status"] == "ready"
-        time.sleep(CONFIG.heartbeat_segundos if pronto else 20)
-        _registrar_uma_vez()
+        time.sleep(3)
+        mudou = ESTADO["status"] != ultimo_status
+        intervalo = CONFIG.heartbeat_segundos if ESTADO["status"] == "ready" else 20
+        if mudou or time.monotonic() - ultimo_anuncio >= intervalo:
+            _registrar_uma_vez()
+            ultimo_status = ESTADO["status"]
+            ultimo_anuncio = time.monotonic()
 
 
 @asynccontextmanager
@@ -317,6 +340,7 @@ async def healthz() -> dict:
     return {
         "status": ESTADO["status"],
         "message": ESTADO["mensagem"],
+        "progress": ESTADO["progresso"],
         "models_loaded": CLIENTE.pronto,
         "vram_free_mb": livre,
         "queue_depth": FILA.profundidade,

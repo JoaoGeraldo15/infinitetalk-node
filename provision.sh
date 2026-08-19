@@ -81,4 +81,53 @@ else
   warn "HF_TOKEN ausente: downloads não autenticados são limitados pelo HF"
 fi
 
-log "preparação concluída — o Wan2GP baixa os pesos (~19 GB) na primeira geração"
+# ── pré-download dos pesos grandes ────────────────────────────────────
+# ⚠️ Já tentamos isto antes e deu errado: baixávamos o repositório
+# `MeiGen-AI/InfiniteTalk` inteiro (157 GB, sete variantes) para
+# `ckpts/InfiniteTalk/`, e o Wan2GP não lia nada daquilo — ele busca em
+# `DeepBeepMeep/Wan2.1` e grava DIRETO em `ckpts/`, sem subpasta.
+#
+# Desta vez os nomes e o destino vieram do log da própria máquina baixando:
+#
+#   wan2.1_image2video_480p_14B_quanto_mbf16(…): 54%|███ | 9.12G/17.0G
+#
+# Por que pré-baixar: sem isto o nó reporta "pronto" com o modelo principal
+# ainda ausente, e a PRIMEIRA geração de cada máquina gasta ~5 min baixando —
+# um tempo que não aparece em barra nenhuma e faz a usuária achar que travou.
+#
+# Se algum nome estiver errado, o custo é só banda: o Wan2GP baixa por cima e
+# nada quebra.
+if [ -n "$HF" ]; then
+  baixar_peso() {
+    local arquivo="$1" destino="$2"
+    if [ -f "$destino/$arquivo" ]; then
+      log "  já em disco: $arquivo"; return 0
+    fi
+    log "baixando $arquivo"
+    "$HF" download DeepBeepMeep/Wan2.1 --include "$arquivo" --local-dir "$destino" \
+      || warn "  falhou (o Wan2GP baixa sob demanda): $arquivo"
+  }
+
+  CKPTS="${WAN2GP_ROOT}/ckpts"
+  mkdir -p "$CKPTS" "${WAN2GP_ROOT}/loras/wan_i2v"
+
+  baixar_peso "${HF_MODELO_I2V:-wan2.1_image2video_480p_14B_quanto_mbf16_int8.safetensors}" "$CKPTS"
+  baixar_peso "${HF_MODELO_TALK:-wan2.1_infinitetalk_single_14B_quanto_mbf16_int8.safetensors}" "$CKPTS"
+
+  # A LoRA vai para outro lugar — `loras/wan_i2v/`, e não `ckpts/`. Descobrimos
+  # pelo log da geração: "Lora 'loras/wan_i2v/Wan21_...' was loaded".
+  lora="${LORA_FILE:-Wan21_I2V_14B_lightx2v_cfg_step_distill_lora_rank64.safetensors}"
+  if [ ! -f "${WAN2GP_ROOT}/loras/wan_i2v/$lora" ]; then
+    log "baixando a LoRA"
+    "$HF" download DeepBeepMeep/Wan2.1 --include "loras_accelerators/$lora" \
+      --local-dir "${WAN2GP_ROOT}/loras/wan_i2v" 2>/dev/null \
+      && mv -f "${WAN2GP_ROOT}/loras/wan_i2v/loras_accelerators/$lora" \
+               "${WAN2GP_ROOT}/loras/wan_i2v/" 2>/dev/null \
+      && rmdir "${WAN2GP_ROOT}/loras/wan_i2v/loras_accelerators" 2>/dev/null \
+      || warn "  LoRA não pré-baixada (o Wan2GP busca sozinho)"
+  fi
+
+  log "pesos em disco: $(du -sh "$CKPTS" 2>/dev/null | cut -f1)"
+fi
+
+log "preparação concluída"
