@@ -104,8 +104,14 @@ class Config:
     marca_provisionado: Path = Path(_env("PROVISION_MARKER", "/workspace/.provisionado"))
     # Tamanho total dos pesos, para a porcentagem do download.
     #
-    # ✅ **MEDIDO** em 2026-08-19, `du -sb` numa máquina que terminou de baixar:
-    # 28.866.124.557 bytes (28 GB). Decomposição:
+    # ✅ **MEDIDO** em 2026-08-19, `du -sb` depois de uma geração COMPLETA:
+    # 34.526.637.772 bytes (32,2 GiB).
+    #
+    # ⚠️ A primeira medição, logo após o boot, deu 28,8 GB — o Wan2GP ainda
+    # baixa ~5,7 GB DURANTE a primeira geração. Medir só depois de gerar é o
+    # que dá o número real; medir antes subestima e a barra some no fim.
+    #
+    # Decomposição do que existe após o boot:
     #
     #     16,0 GB  wan2.1_image2video_480p_14B_quanto_mbf16_int8
     #      2,4 GB  wan2.1_infinitetalk_single_14B_quanto_mbf16_int8
@@ -119,7 +125,7 @@ class Config:
     # barra mostrava "99%", afirmando que ia acabar enquanto faltava muito.
     # Se o valor ficar baixo demais, `_acompanhar_download` esconde a
     # porcentagem em vez de fixá-la em 99% — mas o certo é medir.
-    peso_esperado_bytes: int = _int("EXPECTED_WEIGHTS_BYTES", 28_866_124_557)
+    peso_esperado_bytes: int = _int("EXPECTED_WEIGHTS_BYTES", 34_526_637_772)
 
     work_dir: Path = Path(_env("WORK_DIR", "/workspace/adapter-work"))
     jobs_dir: Path = Path(_env("JOBS_DIR", "/workspace/adapter-jobs"))
